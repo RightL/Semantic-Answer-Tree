@@ -2,7 +2,9 @@
 
 *Explore every answer, branch by branch*
 
-This local tool stores every successful publication as an immutable turn and groups turns into transcripts by stable source session. The public answer still uses the `SemanticAnswer` schema v1. Session identity, turn identity, request summaries, idempotency, and authentication exist only in the surrounding publication protocol.
+Ordinary AI answers tend to be too short or too long, forcing repeated "explain this," "longer," and "shorter" requests. Semantic Answer Tree publishes one structured answer whose branches and terms can be expanded independently without another model call.
+
+The default installation is local-first. It stores every successful publication as an immutable turn and groups turns into transcripts by stable source session. The public answer still uses the `SemanticAnswer` schema v1. Session identity, turn identity, request summaries, idempotency, and authentication exist only in the surrounding publication protocol.
 
 ## 1. Installation and Startup
 
@@ -14,8 +16,10 @@ Requirements:
 
 Install dependencies from the project root:
 
+### Windows
+
 ```powershell
-npm install
+npm ci
 ```
 
 Start the local transcript service in the first terminal:
@@ -37,6 +41,75 @@ npm run dev
 ```
 
 Open [http://localhost:4173](http://localhost:4173). The viewer shows the session list and immutable turns. A new `turn-published` event carries IDs only; the page then reads the committed turn.
+
+### Linux
+
+From the project root, verify the Node.js version and install the locked dependencies:
+
+```bash
+node --version
+npm ci
+```
+
+Node.js must be `>=22.13.0`. Do not continue with the older Node.js version shipped by some Linux distributions; install a current user-scoped Node.js release first.
+
+For ordinary use on the Linux machine, start the transcript service and viewer in separate terminals:
+
+```bash
+# Terminal 1
+npm run local
+```
+
+```bash
+# Terminal 2
+npm run dev
+```
+
+Both processes are loopback-only. Open `http://localhost:4173` on that Linux machine.
+
+#### View a Linux server from Windows through SSH
+
+Keep the Linux server's ports private and forward them through SSH. This example assumes the server viewer and API use their default ports. It uses Windows ports `4174` and `4319`, so a separate Windows installation can keep using `4173` and `4318`.
+
+On the Linux server, build the viewer specifically for the Windows-side API tunnel port before starting it:
+
+```bash
+export PROJECT_ROOT="$(pwd -P)"
+export SEMANTIC_ANSWER_DB="$PROJECT_ROOT/.semantic-answer/semantic-transcript.sqlite3"
+export SEMANTIC_ANSWER_TOKEN_FILE="$PROJECT_ROOT/.semantic-answer/capability-token"
+export SEMANTIC_ANSWER_VIEWER_ORIGINS="http://localhost:4174,http://127.0.0.1:4174"
+export NEXT_PUBLIC_SEMANTIC_ANSWER_API="http://127.0.0.1:4319"
+npm run build
+```
+
+Then start the API and production viewer in separate Linux terminals with the same absolute runtime paths and allowed origins:
+
+```bash
+# Linux terminal 1
+export PROJECT_ROOT="$(pwd -P)"
+export SEMANTIC_ANSWER_DB="$PROJECT_ROOT/.semantic-answer/semantic-transcript.sqlite3"
+export SEMANTIC_ANSWER_TOKEN_FILE="$PROJECT_ROOT/.semantic-answer/capability-token"
+export SEMANTIC_ANSWER_VIEWER_ORIGINS="http://localhost:4174,http://127.0.0.1:4174"
+npm run local
+```
+
+```bash
+# Linux terminal 2
+npm run start
+```
+
+On Windows, keep this PowerShell command running:
+
+```powershell
+ssh -N `
+  -L 4174:127.0.0.1:4173 `
+  -L 4319:127.0.0.1:4318 `
+  user@linux-server
+```
+
+Replace `user@linux-server` with your SSH login and host. Open [http://localhost:4174](http://localhost:4174) on Windows. The page uses `http://127.0.0.1:4319` for API requests, and both connections travel through SSH to loopback listeners on the server. If either Windows-side port changes, update the build-time `NEXT_PUBLIC_SEMANTIC_ANSWER_API`, rebuild, and update `SEMANTIC_ANSWER_VIEWER_ORIGINS` before restarting the service.
+
+Never expose server port `4318` to the LAN or internet. It is intentionally loopback-only, and several transcript-reading routes do not use the capability token. Do not open server port `4173` either; use the SSH tunnel for both ports.
 
 ## 2. Runtime Paths, Tokens, and Environment Variables
 
@@ -104,7 +177,7 @@ If `semantic-answer-viewer` is already registered, remove it once before adding 
 codex mcp remove semantic-answer-viewer
 ```
 
-Then resolve absolute paths and register the adapter from the project root:
+Then resolve absolute paths and register the adapter from the project root. On Windows PowerShell:
 
 ```powershell
 $nodePath = (Get-Command node).Source
@@ -119,6 +192,24 @@ codex mcp add semantic-answer-tree `
 
 codex mcp list
 ```
+
+On Linux Bash:
+
+```bash
+PROJECT_ROOT="$(pwd -P)"
+NODE_PATH="$(command -v node)"
+MCP_PATH="$(realpath server/mcp-server.mjs)"
+TOKEN_FILE="$PROJECT_ROOT/.semantic-answer/capability-token"
+
+codex mcp add semantic-answer-tree \
+  --env "SEMANTIC_ANSWER_SERVICE_URL=http://127.0.0.1:4318" \
+  --env "SEMANTIC_ANSWER_TOKEN_FILE=$TOKEN_FILE" \
+  -- "$NODE_PATH" "$MCP_PATH"
+
+codex mcp list
+```
+
+If Linux still has the old registration, run `codex mcp remove semantic-answer-viewer` once before the `add` command. The MCP adapter and Codex run on the server and reach its loopback API directly; the Windows-side `4319` tunnel port is only for the Windows browser.
 
 The registration name is mutable. Because it is part of each fully qualified MCP tool name, this one-time rename also requires changing the hook matcher to the pattern in section 4 and reviewing and trusting the updated hook again.
 
@@ -156,7 +247,9 @@ sourceTurnKey    = turn_id
 idempotencyKey  = SHA-256("codex:" + session_id + ":" + turn_id)
 ```
 
-The hook does not read transcripts, files, or the network. It reads only hook standard input and hashes IDs. First obtain absolute command paths, then have PowerShell print mergeable JSON. These commands do not write to the user home directory:
+The hook does not read transcripts, files, or the network. It reads only hook standard input and hashes IDs. First obtain absolute command paths, then print mergeable JSON. These commands do not write to the user home directory.
+
+On Windows PowerShell:
 
 ```powershell
 $nodePath = (Get-Command node).Source
@@ -185,6 +278,37 @@ $hookConfig = [ordered]@{
 $hookConfig | ConvertTo-Json -Depth 10
 ```
 
+On Linux Bash:
+
+```bash
+NODE_PATH="$(command -v node)"
+HOOK_PATH="$(realpath integration/codex-session-hook.mjs)"
+HOOK_COMMAND="$(printf '%q %q' "$NODE_PATH" "$HOOK_PATH")"
+export HOOK_COMMAND
+
+"$NODE_PATH" <<'NODE'
+const config = {
+  description: "Bind Semantic Answer Tree calls to the current Codex session and turn.",
+  hooks: {
+    PreToolUse: [
+      {
+        matcher: "^mcp__semantic-answer-tree__(publish_semantic_answer|read_semantic_history)$",
+        hooks: [
+          {
+            type: "command",
+            command: process.env.HOOK_COMMAND,
+            timeout: 5
+          }
+        ]
+      }
+    ]
+  }
+};
+
+console.log(JSON.stringify(config, null, 2));
+NODE
+```
+
 Merge the output into the user-level `~/.codex/hooks.json` or the `.codex/hooks.json` of a trusted project. The command must retain absolute paths for both Node and the script because the hook runs from the session's current working directory. Register the MCP server with the exact name `semantic-answer-tree`, or the matcher will not match.
 
 A non-managed command hook must be reviewed and trusted. After restarting Codex, run `/hooks` and verify the source, matcher, command, and script contents before trusting the exact definition. Any change to the hook definition requires another review. A project hook also requires trusting that project's `.codex` configuration layer. Do not use bypass trust for routine configuration, and do not configure another hook that rewrites the same calls. See the [Codex Hooks documentation](https://learn.chatgpt.com/docs/hooks) for details about inputs, `updatedInput`, and trust.
@@ -209,6 +333,14 @@ $userProfile = [Environment]::GetFolderPath("UserProfile")
 $skillTarget = Join-Path $userProfile ".agents\skills\semantic-zoom-final"
 New-Item -ItemType Directory -Force $skillTarget | Out-Null
 Copy-Item .\semantic-zoom-final\* $skillTarget -Recurse -Force
+```
+
+On Linux Bash:
+
+```bash
+SKILL_TARGET="$HOME/.agents/skills/semantic-zoom-final"
+mkdir -p "$SKILL_TARGET"
+cp -a semantic-zoom-final/. "$SKILL_TARGET/"
 ```
 
 Codex normally discovers the skill automatically. Restart Codex if it does not appear. See the [official Skills documentation](https://developers.openai.com/codex/skills) for location and discovery rules.

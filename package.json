@@ -14,7 +14,7 @@
   "scripts": {
     "dev": "vinext dev --port 4173",
     "build": "vinext build && node scripts/check-build-privacy.mjs dist",
-    "start": "vinext start --port 4173",
+    "start": "vinext start --hostname 127.0.0.1 --port 4173",
     "local": "node server/http.mjs",
     "mcp": "node server/mcp-server.mjs",
     "test": "npm run test:unit && npm run test:browser",

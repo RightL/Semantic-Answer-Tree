@@ -2,14 +2,18 @@
 
 *Explore every answer, branch by branch*
 
-Semantic Answer Tree is a local, multi-session transcript for semantic answers. Codex appends each answer to SQLite as an immutable turn. The dedicated viewer lets you browse history by session, recursively expand the answer structure, and inspect inline word meanings. Each answer is generated once when it is published; expanding content never calls the model.
+Ordinary AI answers are often either too short to be useful or too long to scan. You then spend extra turns asking "explain this," "make it longer," or "make it shorter," only to replace one fixed answer with another.
+
+Semantic Answer Tree replaces that loop with one structured answer. Start with the conclusion, then independently expand only the branches or defined terms you need. The answer is generated once when it is published; expanding it never calls the model.
+
+The default product is local-first: the transcript service, SQLite database, capability token, and real viewer all run on your machine. A hosted Sites page is only a private demonstration built from synthetic data.
 
 ## Quick Start
 
 Node.js `>=22.13.0` is required.
 
 ```powershell
-npm install
+npm ci
 npm run local
 ```
 
@@ -20,6 +24,8 @@ npm run dev
 ```
 
 Open [http://localhost:4173](http://localhost:4173). By default, the local service listens on `http://127.0.0.1:4318`, the database is stored at `.semantic-answer/semantic-transcript.sqlite3`, and the capability token is stored at `.semantic-answer/capability-token`.
+
+Linux is also supported. The [Setup Guide](docs/SETUP.md) includes native Bash commands and a private SSH-tunnel layout for viewing a Linux server's transcript from Windows without exposing the transcript API to the network.
 
 For more detail, see:
 
