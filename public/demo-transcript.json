@@ -1,0 +1,160 @@
+{
+  "sessions": [
+    {
+      "id": "demo-reader-design",
+      "title": "Designing a calm answer reader",
+      "createdAt": "2026-08-08T09:00:00.000Z",
+      "updatedAt": "2026-08-11T10:30:00.000Z",
+      "archivedAt": null,
+      "latestSequence": 3,
+      "latestTurnId": "demo-reader-003",
+      "turnCount": 3
+    },
+    {
+      "id": "demo-research-notes",
+      "title": "Organizing a research notebook",
+      "createdAt": "2026-08-07T08:20:00.000Z",
+      "updatedAt": "2026-08-10T15:10:00.000Z",
+      "archivedAt": null,
+      "latestSequence": 2,
+      "latestTurnId": "demo-research-002",
+      "turnCount": 2
+    }
+  ],
+  "turns": [
+    {
+      "id": "demo-reader-001",
+      "sessionId": "demo-reader-design",
+      "sequence": 1,
+      "createdAt": "2026-08-08T09:00:00.000Z",
+      "requestSummary": "Outline a reader that reveals supporting detail only when it is useful.",
+      "answer": {
+        "version": 1,
+        "title": "Begin with one complete thought",
+        "root": {
+          "content": "Lead with a self-contained answer, then attach supporting branches that remain available without competing for attention.",
+          "children": [
+            {
+              "content": "Keep the central claim visible while deeper evidence opens independently.",
+              "children": [
+                {
+                  "content": "Expansion should be local and instant because every branch is already part of the committed answer."
+                }
+              ]
+            },
+            {
+              "content": "Use a restrained visual hierarchy so structure is apparent before any control is pressed."
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "demo-reader-002",
+      "sessionId": "demo-reader-design",
+      "sequence": 2,
+      "createdAt": "2026-08-09T13:40:00.000Z",
+      "requestSummary": "Add contextual definitions without turning the page into a glossary.",
+      "answer": {
+        "version": 1,
+        "title": "Definitions should stay beside the thought",
+        "root": {
+          "content": "Mark only terms whose local meaning matters. A [context note](term:context-note) opens beside the phrase and closes without changing the answer tree.",
+          "children": [
+            {
+              "content": "Definitions belong to the turn that introduced them, preventing an older meaning from leaking into a newer answer."
+            },
+            {
+              "content": "Keyboard focus returns to the marked phrase after the note closes."
+            }
+          ]
+        },
+        "terms": {
+          "context-note": "A short definition scoped to one answer turn and shown only when its marked phrase is activated."
+        }
+      }
+    },
+    {
+      "id": "demo-reader-003",
+      "sessionId": "demo-reader-design",
+      "sequence": 3,
+      "createdAt": "2026-08-11T10:30:00.000Z",
+      "requestSummary": "Make the reader useful across many sessions while preserving the focused answer experience.",
+      "answer": {
+        "version": 1,
+        "title": "The answer becomes a durable transcript",
+        "root": {
+          "content": "The [Semantic Answer Tree](term:semantic-answer-tree) now keeps immutable turns inside their source sessions. The sidebar moves between conversations; the transcript keeps request context directly above each structured answer.",
+          "children": [
+            {
+              "content": "The latest turn keeps the familiar reading frontier open. Historical turns begin with their root answer and reveal branches when selected.",
+              "children": [
+                {
+                  "content": "Expand, collapse, and copy controls apply only to the selected turn, so actions never spill into nearby history."
+                }
+              ]
+            },
+            {
+              "content": "Earlier pages load upward without moving the sentence already under the reader's eye.",
+              "children": [
+                {
+                  "content": "Only a bounded window of turns remains mounted, with explicit recovery toward newer history when needed."
+                }
+              ]
+            },
+            {
+              "content": "Live updates follow automatically near the bottom. While reading older material, a quiet banner announces the committed turn instead of moving the page."
+            }
+          ]
+        },
+        "terms": {
+          "semantic-answer-tree": "A read-only, session-aware answer tree for structured SemanticAnswer version 1 documents."
+        }
+      }
+    },
+    {
+      "id": "demo-research-001",
+      "sessionId": "demo-research-notes",
+      "sequence": 1,
+      "createdAt": "2026-08-07T08:20:00.000Z",
+      "requestSummary": "Propose a compact way to preserve findings from several small experiments.",
+      "answer": {
+        "version": 1,
+        "title": "Record the decision, evidence, and next check",
+        "root": {
+          "content": "Each note should state what changed, what observation supports it, and what would disprove the current conclusion.",
+          "children": [
+            {
+              "content": "Keep raw measurements linked but separate from the short decision record."
+            },
+            {
+              "content": "Name the next check precisely enough that another person can run it."
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "demo-research-002",
+      "sessionId": "demo-research-notes",
+      "sequence": 2,
+      "createdAt": "2026-08-10T15:10:00.000Z",
+      "requestSummary": "Explain how later findings should relate to earlier notes without rewriting history.",
+      "answer": {
+        "version": 1,
+        "title": "Append the correction; preserve the evidence trail",
+        "root": {
+          "content": "Treat each finding as an immutable turn. A later result can supersede an interpretation while the original observation remains readable in sequence.",
+          "children": [
+            {
+              "content": "Use the request summary to show why each follow-up occurred."
+            },
+            {
+              "content": "Make the newest conclusion easy to reach without hiding the path that produced it."
+            }
+          ]
+        }
+      }
+    }
+  ]
+}
