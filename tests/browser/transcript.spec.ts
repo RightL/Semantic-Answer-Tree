@@ -20,6 +20,27 @@ import {
   viewerBaseUrl,
 } from "./fixtures";
 
+test("temporary Codex sessions are visibly labeled without labeling durable sessions", async ({
+  page,
+  request,
+}) => {
+  const temporary = await publishTurn(request, {
+    sourceSessionKey: `codex-temporary:v1:${uniqueKey("temporary session")}`,
+    sourceTurnKey: uniqueKey("temporary turn"),
+  });
+  const durable = await publishTurn(request, {
+    sourceSessionKey: uniqueKey("durable session"),
+    sourceTurnKey: uniqueKey("durable turn"),
+  });
+
+  await gotoSession(page, temporary.sessionId, temporary.turnId);
+  await expect(page.getByTestId(`temporary-badge-${temporary.sessionId}`)).toHaveText(
+    "Temporary",
+  );
+  await expect(page.getByTestId("active-temporary-badge")).toHaveText("Temporary");
+  await expect(page.getByTestId(`temporary-badge-${durable.sessionId}`)).toHaveCount(0);
+});
+
 test("a background-session publication never steals focus and increments unread", async ({
   page,
   request,

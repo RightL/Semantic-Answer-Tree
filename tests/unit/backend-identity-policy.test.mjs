@@ -8,6 +8,7 @@ import {
   deterministicCodexIdempotencyKey,
   transformCodexPreToolUse,
 } from "../../integration/codex-session-hook.mjs";
+import { TEMPORARY_CODEX_SESSION_PREFIX } from "../../server/identity-namespaces.mjs";
 import {
   VIEWER_SUCCESS_FINAL,
   finalResponseForPublication,
@@ -114,6 +115,112 @@ test("Codex identity stays stable on retry and separates another conversation an
   assert.notEqual(fork.sourceSessionKey, original.sourceSessionKey);
   assert.notEqual(otherConversation.idempotencyKey, original.idempotencyKey);
   assert.notEqual(fork.idempotencyKey, original.idempotencyKey);
+});
+
+test("Codex hook derives stable temporary identity for a side chat without a session id", () => {
+  const input = {
+    tool_name: "mcp__semantic-answer-tree__publish_semantic_answer",
+    turn_id: "side-chat-turn-1",
+    tool_use_id: "side-chat-tool-1",
+    tool_input: {
+      ...publication(),
+      sourceSessionKey: "model-guessed-session",
+      sourceTurnKey: "model-guessed-turn",
+      idempotencyKey: "model-guessed-idempotency",
+    },
+  };
+
+  const first = transformCodexPreToolUse(input).hookSpecificOutput.updatedInput;
+  const retry = transformCodexPreToolUse(input).hookSpecificOutput.updatedInput;
+
+  assert.deepEqual(retry, first);
+  const sessionDigest = createHash("sha256")
+    .update("semantic-answer-tree:temporary-session:v1:side-chat-turn-1")
+    .digest("hex");
+  assert.equal(first.sourceSessionKey, `${TEMPORARY_CODEX_SESSION_PREFIX}${sessionDigest}`);
+  assert.equal(first.sourceTurnKey, "side-chat-turn-1");
+  assert.equal(
+    first.idempotencyKey,
+    createHash("sha256")
+      .update(`${first.sourceSessionKey}:side-chat-turn-1`)
+      .digest("hex"),
+  );
+  assert.notEqual(first.sourceSessionKey, input.tool_input.sourceSessionKey);
+  assert.doesNotMatch(first.sourceSessionKey, /side-chat-turn-1/);
+  assert.notEqual(first.idempotencyKey, input.tool_input.idempotencyKey);
+
+  const history = transformCodexPreToolUse({
+    tool_name: "mcp__semantic-answer-tree__read_semantic_history",
+    turn_id: "side-chat-turn-1",
+    tool_use_id: "side-chat-history-tool",
+    tool_input: { limit: 3, sourceSessionKey: "model-guessed-session" },
+  }).hookSpecificOutput.updatedInput;
+  assert.deepEqual(history, {
+    limit: 3,
+    sourceSessionKey: first.sourceSessionKey,
+  });
+});
+
+test("Codex temporary identity spans tool uses, separates side chats, and preserves durable identity", () => {
+  const temporary = (turnId, toolUseId) =>
+    transformCodexPreToolUse({
+      tool_name: "mcp__semantic-answer-tree__publish_semantic_answer",
+      turn_id: turnId,
+      tool_use_id: toolUseId,
+      tool_input: publication(),
+    }).hookSpecificOutput.updatedInput;
+
+  const original = temporary("side-chat-turn-1", "side-chat-tool-1");
+  const anotherToolUse = temporary("side-chat-turn-1", "side-chat-tool-2");
+  const anotherSideChat = temporary("side-chat-turn-2", "side-chat-tool-1");
+
+  assert.deepEqual(anotherToolUse, original);
+  assert.notEqual(anotherSideChat.sourceSessionKey, original.sourceSessionKey);
+  assert.notEqual(anotherSideChat.idempotencyKey, original.idempotencyKey);
+
+  const durable = (toolUseId) =>
+    transformCodexPreToolUse({
+      tool_name: "mcp__semantic-answer-tree__publish_semantic_answer",
+      session_id: "thread-durable",
+      turn_id: "turn-durable",
+      tool_use_id: toolUseId,
+      tool_input: publication(),
+    }).hookSpecificOutput.updatedInput;
+  const durableFirst = durable("tool-use-1");
+  const durableAnotherToolUse = durable("tool-use-2");
+
+  assert.deepEqual(durableAnotherToolUse, durableFirst);
+  assert.equal(durableFirst.sourceSessionKey, "codex:thread-durable");
+  assert.equal(
+    durableFirst.idempotencyKey,
+    deterministicCodexIdempotencyKey("thread-durable", "turn-durable"),
+  );
+  assert.notEqual(durableFirst.sourceSessionKey, original.sourceSessionKey);
+});
+
+test("Codex hook treats whitespace identity as absent and never derives from tool-use identity", () => {
+  const temporary = transformCodexPreToolUse({
+    tool_name: "mcp__semantic-answer-tree__publish_semantic_answer",
+    session_id: "   ",
+    turn_id: "side-chat-turn",
+    tool_use_id: "tool-use-must-not-be-identity",
+    tool_input: publication(),
+  }).hookSpecificOutput.updatedInput;
+  assert.match(temporary.sourceSessionKey, /^codex-temporary:v1:[a-f0-9]{64}$/);
+
+  const unchanged = publication({
+    sourceSessionKey: "manual-session",
+    sourceTurnKey: "manual-turn",
+    idempotencyKey: "manual-idempotency",
+  });
+  const noTurn = transformCodexPreToolUse({
+    tool_name: "mcp__semantic-answer-tree__publish_semantic_answer",
+    session_id: "durable-session",
+    turn_id: " \t ",
+    tool_use_id: "tool-use-must-not-be-identity",
+    tool_input: unchanged,
+  }).hookSpecificOutput.updatedInput;
+  assert.deepEqual(noTurn, unchanged);
 });
 
 test("MCP publication rejects missing hook idempotency before transport and never echoes the document", async () => {

@@ -63,10 +63,12 @@ test("serves session, page, and one-turn query shapes after authenticated public
       "id",
       "latestSequence",
       "latestTurnId",
+      "temporary",
       "title",
       "turnCount",
       "updatedAt",
     ]);
+    assert.equal(sessions[0].temporary, false);
 
     const page = await (
       await fetch(`${baseUrl}/api/sessions/${acknowledgment.sessionId}/turns?limit=20&detail=full`)
@@ -79,6 +81,48 @@ test("serves session, page, and one-turn query shapes after authenticated public
       await fetch(`${baseUrl}/api/turns/${acknowledgment.turnId}?detail=full`)
     ).json();
     assert.equal(one.turn.id, acknowledgment.turnId);
+  } finally {
+    await service.stop();
+    await removeTemporaryDirectory(directory);
+  }
+});
+
+test("marks only Codex temporary-source sessions as temporary without exposing the source key", async () => {
+  const { directory, service, baseUrl } = await startService();
+  try {
+    await publish(
+      baseUrl,
+      publication({
+        sourceSessionKey: "codex-temporary:v1:turn-123",
+        sourceTurnKey: "turn-123",
+        idempotencyKey: "idempotency:temporary:turn-123",
+      }),
+    );
+    await publish(
+      baseUrl,
+      publication({
+        sourceSessionKey: "codex-temporary:v2:turn-456",
+        sourceTurnKey: "turn-456",
+        idempotencyKey: "idempotency:durable:turn-456",
+      }),
+    );
+
+    const sessions = (await (await fetch(`${baseUrl}/api/sessions`)).json()).sessions;
+    assert.equal(sessions.length, 2);
+    const temporary = sessions.find((session) => session.temporary);
+    const durable = sessions.find((session) => !session.temporary);
+    assert.ok(temporary);
+    assert.ok(durable);
+    assert.doesNotMatch(JSON.stringify(sessions), /sourceSessionKey|source_session_key|turn-123/);
+
+    const historyResponse = await fetch(
+      `${baseUrl}/api/history?sourceSessionKey=${encodeURIComponent("codex-temporary:v1:turn-123")}`,
+      { headers: authenticatedHeaders() },
+    );
+    assert.equal(historyResponse.status, 200);
+    const history = await historyResponse.json();
+    assert.equal(history.session.temporary, true);
+    assert.doesNotMatch(JSON.stringify(history.session), /sourceSessionKey|source_session_key|turn-123/);
   } finally {
     await service.stop();
     await removeTemporaryDirectory(directory);

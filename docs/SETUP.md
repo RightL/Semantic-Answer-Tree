@@ -247,6 +247,16 @@ sourceTurnKey    = turn_id
 idempotencyKey  = SHA-256("codex:" + session_id + ":" + turn_id)
 ```
 
+Some one-off side chats provide a `turn_id` but no stable `session_id`. The hook handles them instead of disabling publication:
+
+```text
+sourceSessionKey = "codex-temporary:v1:" + SHA-256("semantic-answer-tree:temporary-session:v1:" + turn_id)
+sourceTurnKey    = turn_id
+idempotencyKey  = SHA-256(sourceSessionKey + ":" + turn_id)
+```
+
+This creates a separate, turn-scoped transcript that the viewer labels `Temporary`. It never copies or guesses the main task's identity. The row remains in the same append-only local database; `Temporary` describes its isolated identity scope, not automatic deletion.
+
 The hook does not read transcripts, files, or the network. It reads only hook standard input and hashes IDs. First obtain absolute command paths, then print mergeable JSON. These commands do not write to the user home directory.
 
 On Windows PowerShell:
@@ -313,11 +323,12 @@ Merge the output into the user-level `~/.codex/hooks.json` or the `.codex/hooks.
 
 A non-managed command hook must be reviewed and trusted. After restarting Codex, run `/hooks` and verify the source, matcher, command, and script contents before trusting the exact definition. Any change to the hook definition requires another review. A project hook also requires trusting that project's `.codex` configuration layer. Do not use bypass trust for routine configuration, and do not configure another hook that rewrites the same calls. See the [Codex Hooks documentation](https://learn.chatgpt.com/docs/hooks) for details about inputs, `updatedInput`, and trust.
 
-If hook input lacks `session_id` or `turn_id`, the included script passes through the original arguments instead of inventing identity. The MCP server or service then rejects missing identity or idempotency unless you have configured the explicit session binding below and supplied a reusable idempotency key explicitly for that turn.
+If hook input has neither a stable `session_id` nor a `turn_id`, the included script passes through the original arguments instead of inventing identity. The MCP server or service then rejects missing identity or idempotency unless you have configured the explicit session binding below and supplied a reusable idempotency key explicitly for that turn.
 
 ### Alternative Identity Strategies
 
 - App Server wrapper: use the returned `thread.id` as the source conversation key and `turn.id` as the source turn key. Do not use `thread.sessionId` as fork identity. A persistent fork has a new `thread.id` but retains the root `thread.sessionId`. See the [Codex App Server documentation](https://learn.chatgpt.com/docs/app-server).
+- Temporary side chat: when Codex supplies `turn_id` without `session_id`, use the bundled hook's isolated `codex-temporary:v1:` binding. Do not substitute an ID copied from a main task.
 - Explicit fallback: only when neither a hook nor a wrapper is available, set a unique `SEMANTIC_ANSWER_SESSION_KEY` in an MCP configuration dedicated to that conversation. This is a manual binding; it does not automatically follow a thread, fork, or new conversation.
 
 The implementation also accepts `SEMANTIC_ANSWER_TURN_KEY`, but its value must change with every logical turn. Never set it statically in a reused MCP configuration, or it will cause `source_turn_conflict`. For the normal fallback, provide the source turn and idempotency key directly in that turn's tool arguments.
@@ -349,13 +360,9 @@ Codex normally discovers the skill automatically. Restart Codex if it does not a
 Use $semantic-zoom-final to publish the final answer to Semantic Answer Tree.
 ```
 
-The skill:
+The runtime skill stays intentionally small. It covers only model-authored decisions: compact history use, the concise `requestSummary`, the semantic-tree invariant, structural versus lexical zoom, proportional detail, and the single final-answer surface. The MCP tool schema and service own the exact payload shape and validation; the hook owns source identity and the idempotency key; the MCP adapter owns acknowledgement validation and one identical retry after ambiguous delivery. Each local MCP HTTP attempt has a ten-second deadline, so a stalled request reaches recovery or a safe fallback instead of hanging indefinitely.
 
-1. Reads compact history only when prior context is needed and reads at most one full prior turn.
-2. Generates a one- or two-sentence `requestSummary` that describes the current user request without restating the answer.
-3. Generates a complete `SemanticAnswer` v1 tree. Its structural and lexical-zoom rules are unchanged.
-4. Obtains source keys and a deterministic idempotency key through the hook, then publishes one logical envelope.
-5. Outputs the following exact final status only after receiving the durable `{ ok: true, sessionId, turnId, sequence }` acknowledgment:
+After receiving the durable `{ ok: true, sessionId, turnId, sequence }` acknowledgment, the skill outputs only:
 
 ```text
 Rendered in Semantic Answer Tree.
@@ -363,7 +370,7 @@ Rendered in Semantic Answer Tree.
 
 After a successful publication, the normal final response must not repeat the answer body, JSON, a Markdown summary, or a glossary.
 
-After a validation rejection, the skill makes one correction based only on the structured issue and retries once with the same idempotency key. If a timeout leaves the commit status unknown, it retries once with exactly the same envelope and key. A retry of an already committed publication returns the original acknowledgment without appending a turn or sending a second event. If a durable acknowledgment still cannot be confirmed, the skill does not output the rendered status and instead gives the complete ordinary answer in the current conversation.
+After a validation rejection, the skill may correct the reported document issue once. Ambiguous delivery recovery is automatic inside the MCP adapter and reuses the exact serialized envelope. If a durable acknowledgment still cannot be confirmed, the skill does not output the rendered status and instead gives the complete ordinary answer in the current conversation.
 
 ## 6. HTTP API and Fallback
 
@@ -462,7 +469,7 @@ The application code loads no remote images, telemetry, or remote fonts. The def
 
 - `401`: confirm that the HTTP service and MCP adapter use the same `SEMANTIC_ANSWER_TOKEN` or the same absolute `SEMANTIC_ANSWER_TOKEN_FILE`.
 - `403 origin_forbidden`: add the actual viewer origin exactly to `SEMANTIC_ANSWER_VIEWER_ORIGINS`.
-- `missing_session_identity`: enable and trust the included hook. Use `SEMANTIC_ANSWER_SESSION_KEY` only when you explicitly accept a manual binding.
+- `missing_session_identity`: enable and trust the included hook. A side chat with a `turn_id` receives an isolated Temporary session automatically; if the hook has no turn identity either, use `SEMANTIC_ANSWER_SESSION_KEY` only when you explicitly accept a manual binding.
 - Hook does not run: use `/hooks` to inspect the source, matcher, hash, and trust status. Confirm that the matcher matches `mcp__semantic-answer-tree__...`.
 - MCP connects but publishing fails: confirm that `npm run local` is running, verify `SEMANTIC_ANSWER_SERVICE_URL`, and request `GET /health`.
 - A timeout leaves the write uncertain: retry only with the same envelope and idempotency key; do not generate a new key.

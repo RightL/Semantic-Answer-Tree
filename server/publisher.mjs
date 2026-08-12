@@ -10,6 +10,7 @@ import { SessionIdentityProvider } from "./session-identity.mjs";
 
 export const SEMANTIC_ANSWER_SERVICE_URL_ENV = "SEMANTIC_ANSWER_SERVICE_URL";
 export const DEFAULT_SERVICE_URL = "http://127.0.0.1:4318";
+export const DEFAULT_REQUEST_TIMEOUT_MS = 10_000;
 
 function requireLoopbackServiceUrl(value) {
   let parsed;
@@ -34,6 +35,36 @@ function requireLoopbackServiceUrl(value) {
 
 function isObject(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isDurablePublishAcknowledgement(value) {
+  return (
+    isObject(value) &&
+    value.ok === true &&
+    typeof value.sessionId === "string" &&
+    value.sessionId.trim().length > 0 &&
+    typeof value.turnId === "string" &&
+    value.turnId.trim().length > 0 &&
+    Number.isSafeInteger(value.sequence) &&
+    value.sequence > 0 &&
+    !Object.hasOwn(value, "error")
+  );
+}
+
+function invalidPublishAcknowledgementError() {
+  return Object.assign(
+    new Error("The local Semantic Answer service did not confirm a durable publication."),
+    { code: "invalid_publish_acknowledgement" },
+  );
+}
+
+function isAmbiguousPublicationError(error) {
+  return (
+    error?.code === "service_unavailable" ||
+    error?.code === "invalid_service_response" ||
+    error?.code === "invalid_publish_acknowledgement" ||
+    (Number.isInteger(error?.status) && error.status >= 500)
+  );
 }
 
 function toolResult(body, isError = false) {
@@ -98,15 +129,24 @@ export class SemanticAnswerServiceClient {
         DEFAULT_SERVICE_URL,
     );
     this.fetch = options.fetchImpl ?? fetch;
+    this.requestTimeoutMs = options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
+    if (!Number.isFinite(this.requestTimeoutMs) || this.requestTimeoutMs <= 0) {
+      throw new TypeError("requestTimeoutMs must be a positive finite number.");
+    }
     this.token = loadClientToken(options, this.environment);
   }
 
   async request(pathname, options = {}) {
     let response;
     try {
+      const timeoutSignal = AbortSignal.timeout(this.requestTimeoutMs);
+      const signal = options.signal
+        ? AbortSignal.any([options.signal, timeoutSignal])
+        : timeoutSignal;
       response = await this.fetch(`${this.baseUrl}${pathname}`, {
         ...options,
         redirect: "error",
+        signal,
         headers: {
           Authorization: `Bearer ${this.token}`,
           ...(options.headers ?? {}),
@@ -145,18 +185,30 @@ export class SemanticAnswerServiceClient {
     if (!response.ok) {
       const safe = safeServiceError(body, response.status);
       const error = new Error(safe.message);
-      Object.assign(error, safe);
+      Object.assign(error, safe, { status: response.status });
       throw error;
     }
     return body;
   }
 
-  publish(envelope) {
-    return this.request("/api/publish", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(envelope),
-    });
+  async publish(envelope) {
+    const body = JSON.stringify(envelope);
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        const acknowledgment = await this.request("/api/publish", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body,
+        });
+        if (!isDurablePublishAcknowledgement(acknowledgment)) {
+          throw invalidPublishAcknowledgementError();
+        }
+        return acknowledgment;
+      } catch (error) {
+        if (attempt === 1 || !isAmbiguousPublicationError(error)) throw error;
+      }
+    }
+    throw invalidPublishAcknowledgementError();
   }
 
   readHistory(argumentsValue) {

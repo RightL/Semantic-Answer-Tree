@@ -14,7 +14,7 @@ export const HISTORY_TOOL_NAME = "read_semantic_history";
 export const TURN_TOOL_NAME = "read_semantic_turn";
 
 export const MCP_SERVER_INSTRUCTIONS =
-  "Publish one complete SemanticAnswer v1 envelope for each final answer. Stable session/turn identity and idempotency should come from the Codex hook. Retry validation once; reuse the same idempotency key after an ambiguous timeout. On success, the normal final response is exactly: Rendered in Semantic Answer Tree. On failure, give the ordinary answer instead—never both. History is read-only and compact by default.";
+  "Publish one complete SemanticAnswer v1 tree per final answer. The integration owns identity, idempotency, acknowledgement checks, and ambiguous-delivery recovery. A side chat may receive an isolated temporary session; never reuse the main task identity. Correct validation once at most. On confirmed success, reply exactly: Rendered in Semantic Answer Tree. If success is unconfirmed, give the complete ordinary answer instead—never both. History is read-only and compact by default.";
 
 const SEMANTIC_ANSWER_SCHEMA = {
   type: "object",

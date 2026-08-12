@@ -1,11 +1,13 @@
 import { createHash } from "node:crypto";
 import { pathToFileURL } from "node:url";
 
+import { TEMPORARY_CODEX_SESSION_PREFIX } from "../server/identity-namespaces.mjs";
+
 const PUBLISH_TOOL = "mcp__semantic-answer-tree__publish_semantic_answer";
 const HISTORY_TOOL = "mcp__semantic-answer-tree__read_semantic_history";
 
 function nonEmptyString(value) {
-  return typeof value === "string" && value.length > 0;
+  return typeof value === "string" && value.trim().length > 0;
 }
 
 function allowWith(updatedInput) {
@@ -22,6 +24,18 @@ export function deterministicCodexIdempotencyKey(sessionId, turnId) {
   return createHash("sha256").update(`codex:${sessionId}:${turnId}`).digest("hex");
 }
 
+function temporaryCodexIdentity(turnId) {
+  const digest = createHash("sha256")
+    .update(`semantic-answer-tree:temporary-session:v1:${turnId}`)
+    .digest("hex");
+  const sourceSessionKey = `${TEMPORARY_CODEX_SESSION_PREFIX}${digest}`;
+  return {
+    sourceSessionKey,
+    sourceTurnKey: turnId,
+    idempotencyKey: createHash("sha256").update(`${sourceSessionKey}:${turnId}`).digest("hex"),
+  };
+}
+
 /** Transform only Semantic Answer Tree calls; null means a safe hook no-op. */
 export function transformCodexPreToolUse(input) {
   if (!input || typeof input !== "object") {
@@ -36,8 +50,11 @@ export function transformCodexPreToolUse(input) {
       : {};
 
   if (toolName === PUBLISH_TOOL) {
-    if (!nonEmptyString(sessionId) || !nonEmptyString(turnId)) {
+    if (!nonEmptyString(turnId)) {
       return allowWith({ ...originalInput });
+    }
+    if (!nonEmptyString(sessionId)) {
+      return allowWith({ ...originalInput, ...temporaryCodexIdentity(turnId) });
     }
     return allowWith({
       ...originalInput,
@@ -48,10 +65,13 @@ export function transformCodexPreToolUse(input) {
   }
 
   if (toolName === HISTORY_TOOL) {
-    if (!nonEmptyString(sessionId)) {
+    if (nonEmptyString(sessionId)) {
+      return allowWith({ ...originalInput, sourceSessionKey: `codex:${sessionId}` });
+    }
+    if (!nonEmptyString(turnId)) {
       return allowWith({ ...originalInput });
     }
-    return allowWith({ ...originalInput, sourceSessionKey: `codex:${sessionId}` });
+    return allowWith({ ...originalInput, sourceSessionKey: temporaryCodexIdentity(turnId).sourceSessionKey });
   }
   return null;
 }

@@ -8,6 +8,8 @@ Semantic Answer Tree replaces that loop with one structured answer. Start with t
 
 The default product is local-first: the transcript service, SQLite database, capability token, and real viewer all run on your machine. A hosted Sites page is only a private demonstration built from synthetic data.
 
+One-off Codex side chats that have a turn identity but no stable conversation identity publish into their own viewer session marked `Temporary`; they never borrow or merge into the main task's transcript.
+
 ## Quick Start
 
 Node.js `>=22.13.0` is required.

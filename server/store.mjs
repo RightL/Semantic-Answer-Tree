@@ -10,6 +10,7 @@ import {
   assertSemanticAnswer,
   extractTermReferences,
 } from "./validation.mjs";
+import { isTemporarySourceSessionKey } from "./identity-namespaces.mjs";
 
 export const SEMANTIC_ANSWER_DB_ENV = "SEMANTIC_ANSWER_DB";
 export const SEMANTIC_ANSWER_LEGACY_FILE_ENV = "SEMANTIC_ANSWER_LEGACY_FILE";
@@ -87,6 +88,7 @@ function mapSession(row) {
   return {
     id: row.id,
     title: row.title,
+    temporary: isTemporarySourceSessionKey(row.source_session_key),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     archivedAt: row.archived_at ?? null,
@@ -509,7 +511,7 @@ export class SemanticTranscriptStore {
     return this.#database
       .prepare(`
         SELECT
-          s.id, s.title, s.created_at, s.updated_at, s.archived_at,
+          s.id, s.source_session_key, s.title, s.created_at, s.updated_at, s.archived_at,
           COUNT(t.id) AS turn_count,
           COALESCE(MAX(t.sequence), 0) AS latest_sequence,
           (
@@ -608,7 +610,7 @@ export class SemanticTranscriptStore {
     const beforeSequence = optionalSequence(options.beforeSequence, "beforeSequence");
     const limit = clampLimit(options.limit, 10, 50);
     const session = this.#database
-      .prepare("SELECT id, title, created_at, updated_at, archived_at FROM sessions WHERE source_session_key = ?")
+      .prepare("SELECT id, source_session_key, title, created_at, updated_at, archived_at FROM sessions WHERE source_session_key = ?")
       .get(sourceSessionKey);
     if (!session) {
       throw new SemanticTranscriptNotFoundError("session_not_found", "Session not found.");
@@ -627,6 +629,7 @@ export class SemanticTranscriptStore {
       session: {
         id: session.id,
         title: session.title,
+        temporary: isTemporarySourceSessionKey(session.source_session_key),
         createdAt: session.created_at,
         updatedAt: session.updated_at,
         archivedAt: session.archived_at ?? null,

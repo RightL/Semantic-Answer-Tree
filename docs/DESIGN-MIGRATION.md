@@ -93,6 +93,8 @@ The hook derives:
 
 The `codex:` namespace prevents collisions with manual bindings. The hook injects identifiers only; it does not read or upload the full transcript.
 
+For a one-off side chat that has `turn_id` but no stable `session_id`, the hook instead derives a hashed key under the disjoint, versioned `codex-temporary:v1:` namespace, keeps the same source turn key, and hashes those values for idempotency. This makes the side chat publishable without storing its raw turn ID as a session key or impersonating the main task. Session reads expose only a derived `temporary` boolean, never the source key, and the viewer marks the transcript `Temporary`. The transcript remains append-only; temporary means turn-scoped identity rather than automatic deletion.
+
 When using an App Server wrapper, use the stable `thread.id` as the conversation key and `turn.id` as the turn key. Do not use `thread.sessionId` as the fork identity: the official documentation states that a fork receives a new `thread.id`, while a persisted fork retains the root's `thread.sessionId`. [Codex App Server documentation](https://learn.chatgpt.com/docs/app-server)
 
 Only when neither the hook nor a wrapper is available should each conversation receive an explicitly configured, unique `SEMANTIC_ANSWER_SESSION_KEY`. This is a manual binding; it does not change automatically with a Codex thread or fork.
@@ -127,8 +129,8 @@ The application does not load remote images, remote fonts, or telemetry. The hos
 
 ## Failures and recovery
 
-- Validation failure: nothing commits. Codex uses the structured issue to correct the envelope once, then retries once with the same idempotency key.
-- Ambiguous timeout: retry with the exact same envelope and idempotency key. If the first request committed, the service returns the original acknowledgement and does not emit a second event.
+- Validation failure: nothing commits. Codex may use the structured issue to correct the document once; the hook supplies the same turn-scoped idempotency key.
+- Ambiguous delivery: the MCP adapter gives each loopback attempt a ten-second deadline and retries once with the exact same serialized envelope. If the first request committed, the service returns the original acknowledgement and does not emit a second event.
 - Token, HTTP, migration, or database failure: do not fabricate a success acknowledgement. The last committed turn remains readable.
 - Durable acknowledgement cannot be confirmed: Codex does not output rendered status and instead provides the complete normal answer in the current conversation.
 - SSE interruption: committed data remains in SQLite. After reconnecting, the viewer recovers through event replay and a turn read.
