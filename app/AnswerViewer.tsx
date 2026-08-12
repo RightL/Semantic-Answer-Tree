@@ -1079,7 +1079,32 @@ export function AnswerViewer({ initialTranscript }: { initialTranscript: DemoTra
     saveCurrent = true,
     forceBottom = false,
   ) => {
-    if (!sessionId) return;
+    if (!sessionId) {
+      ++requestSequence.current;
+      pendingScrollAnchorRef.current = null;
+      followedSequenceRef.current = 0;
+      activeSessionRef.current = "";
+      selectedTurnRef.current = null;
+      turnsRef.current = [];
+      expandedByTurnRef.current = {};
+      hasNewerRef.current = false;
+      setActiveSessionId("");
+      setTurns([]);
+      setSelectedTurnId(null);
+      setExpandedByTurn({});
+      setUnreadBySession({});
+      setHasOlder(false);
+      setHasNewer(false);
+      setLoadingDirection(null);
+      setPendingLatest(0);
+      setOpenTerm(null);
+      setCopyState(null);
+      const url = new URL(window.location.href);
+      url.searchParams.delete("session");
+      url.searchParams.delete("turn");
+      window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
+      return;
+    }
     if (saveCurrent) persistSessionState();
     pendingScrollAnchorRef.current = null;
     followedSequenceRef.current = 0;
