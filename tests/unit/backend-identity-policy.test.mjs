@@ -47,7 +47,7 @@ test("SessionIdentityProvider prefers injected identity, falls back only to expl
 
 test("Codex hook namespaces and overwrites publication identity deterministically", () => {
   const input = {
-    tool_name: "mcp__semantic-answer-viewer__publish_semantic_answer",
+    tool_name: "mcp__semantic-answer-tree__publish_semantic_answer",
     session_id: "thread-123",
     turn_id: "turn-456",
     tool_input: {
@@ -76,7 +76,7 @@ test("Codex hook namespaces and overwrites publication identity deterministicall
 
 test("Codex hook injects history identity and is an empty-output no-op for other tools", () => {
   const history = transformCodexPreToolUse({
-    tool_name: "mcp__semantic-answer-viewer__read_semantic_history",
+    tool_name: "mcp__semantic-answer-tree__read_semantic_history",
     session_id: "thread-history",
     turn_id: "turn-history",
     tool_input: { limit: 3, sourceSessionKey: "wrong" },
@@ -99,7 +99,7 @@ test("Codex hook injects history identity and is an empty-output no-op for other
 test("Codex identity stays stable on retry and separates another conversation and fork", () => {
   const call = (sessionId, turnId) =>
     transformCodexPreToolUse({
-      tool_name: "mcp__semantic-answer-viewer__publish_semantic_answer",
+      tool_name: "mcp__semantic-answer-tree__publish_semantic_answer",
       session_id: sessionId,
       turn_id: turnId,
       tool_input: publication(),

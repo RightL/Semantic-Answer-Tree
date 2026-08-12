@@ -101,7 +101,7 @@ export async function runMcpServer(options = {}) {
   const identityProvider =
     options.identityProvider ?? new SessionIdentityProvider({ environment: options.environment });
   const server = new Server(
-    { name: "semantic-answer-viewer", version: "2.0.0" },
+    { name: "semantic-answer-tree", version: "2.0.0" },
     { capabilities: { tools: {} }, instructions: MCP_SERVER_INSTRUCTIONS },
   );
 

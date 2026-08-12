@@ -1,8 +1,8 @@
 import { createHash } from "node:crypto";
 import { pathToFileURL } from "node:url";
 
-const PUBLISH_TOOL = "mcp__semantic-answer-viewer__publish_semantic_answer";
-const HISTORY_TOOL = "mcp__semantic-answer-viewer__read_semantic_history";
+const PUBLISH_TOOL = "mcp__semantic-answer-tree__publish_semantic_answer";
+const HISTORY_TOOL = "mcp__semantic-answer-tree__read_semantic_history";
 
 function nonEmptyString(value) {
   return typeof value === "string" && value.length > 0;

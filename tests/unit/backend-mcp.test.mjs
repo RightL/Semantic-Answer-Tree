@@ -48,6 +48,7 @@ test(
 
     try {
       await client.connect(transport);
+      assert.equal(client.getServerVersion()?.name, "semantic-answer-tree");
       assert.equal(client.getInstructions(), MCP_SERVER_INSTRUCTIONS);
       assert.ok(MCP_SERVER_INSTRUCTIONS.length <= 512);
       assert.match(MCP_SERVER_INSTRUCTIONS, /never both/i);
