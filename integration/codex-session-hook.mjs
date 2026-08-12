@@ -3,8 +3,8 @@ import { pathToFileURL } from "node:url";
 
 import { TEMPORARY_CODEX_SESSION_PREFIX } from "../server/identity-namespaces.mjs";
 
-const PUBLISH_TOOL = "mcp__semantic-answer-tree__publish_semantic_answer";
-const HISTORY_TOOL = "mcp__semantic-answer-tree__read_semantic_history";
+const PUBLISH_TOOL = "mcp__semantic_answer_tree__publish_semantic_answer";
+const HISTORY_TOOL = "mcp__semantic_answer_tree__read_semantic_history";
 
 function nonEmptyString(value) {
   return typeof value === "string" && value.trim().length > 0;

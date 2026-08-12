@@ -236,8 +236,10 @@ The preferred solution is the included `integration/codex-session-hook.mjs`. The
 Use this exact hook matcher:
 
 ```text
-^mcp__semantic-answer-tree__(publish_semantic_answer|read_semantic_history)$
+^mcp__semantic_answer_tree__(publish_semantic_answer|read_semantic_history)$
 ```
+
+The MCP registration remains `semantic-answer-tree`. Codex normalizes its hyphens to underscores in the fully qualified hook `tool_name`, so the matcher must use `semantic_answer_tree` exactly as shown.
 
 During `PreToolUse`, the hook reads the Codex common `session_id`, the turn-scoped `turn_id`, and the MCP `tool_input`. It then injects the following values through `updatedInput`, overriding fields with the same names supplied by the model:
 
@@ -271,7 +273,7 @@ $hookConfig = [ordered]@{
   hooks = [ordered]@{
     PreToolUse = @(
       [ordered]@{
-        matcher = "^mcp__semantic-answer-tree__(publish_semantic_answer|read_semantic_history)$"
+        matcher = "^mcp__semantic_answer_tree__(publish_semantic_answer|read_semantic_history)$"
         hooks = @(
           [ordered]@{
             type = "command"
@@ -302,7 +304,7 @@ const config = {
   hooks: {
     PreToolUse: [
       {
-        matcher: "^mcp__semantic-answer-tree__(publish_semantic_answer|read_semantic_history)$",
+        matcher: "^mcp__semantic_answer_tree__(publish_semantic_answer|read_semantic_history)$",
         hooks: [
           {
             type: "command",
@@ -319,7 +321,7 @@ console.log(JSON.stringify(config, null, 2));
 NODE
 ```
 
-Merge the output into the user-level `~/.codex/hooks.json` or the `.codex/hooks.json` of a trusted project. The command must retain absolute paths for both Node and the script because the hook runs from the session's current working directory. Register the MCP server with the exact name `semantic-answer-tree`, or the matcher will not match.
+Merge the output into the user-level `~/.codex/hooks.json` or the `.codex/hooks.json` of a trusted project. The command must retain absolute paths for both Node and the script because the hook runs from the session's current working directory. Register the MCP server with the exact name `semantic-answer-tree`; Codex exposes that registration to hooks as the normalized `semantic_answer_tree` segment used by the matcher above.
 
 A non-managed command hook must be reviewed and trusted. After restarting Codex, run `/hooks` and verify the source, matcher, command, and script contents before trusting the exact definition. Any change to the hook definition requires another review. A project hook also requires trusting that project's `.codex` configuration layer. Do not use bypass trust for routine configuration, and do not configure another hook that rewrites the same calls. See the [Codex Hooks documentation](https://learn.chatgpt.com/docs/hooks) for details about inputs, `updatedInput`, and trust.
 
@@ -470,7 +472,7 @@ The application code loads no remote images, telemetry, or remote fonts. The def
 - `401`: confirm that the HTTP service and MCP adapter use the same `SEMANTIC_ANSWER_TOKEN` or the same absolute `SEMANTIC_ANSWER_TOKEN_FILE`.
 - `403 origin_forbidden`: add the actual viewer origin exactly to `SEMANTIC_ANSWER_VIEWER_ORIGINS`.
 - `missing_session_identity`: enable and trust the included hook. A side chat with a `turn_id` receives an isolated Temporary session automatically; if the hook has no turn identity either, use `SEMANTIC_ANSWER_SESSION_KEY` only when you explicitly accept a manual binding.
-- Hook does not run: use `/hooks` to inspect the source, matcher, hash, and trust status. Confirm that the matcher matches `mcp__semantic-answer-tree__...`.
+- Hook does not run: use `/hooks` to inspect the source, matcher, hash, and trust status. Confirm that the matcher matches the underscore-normalized `mcp__semantic_answer_tree__...` tool name.
 - MCP connects but publishing fails: confirm that `npm run local` is running, verify `SEMANTIC_ANSWER_SERVICE_URL`, and request `GET /health`.
 - A timeout leaves the write uncertain: retry only with the same envelope and idempotency key; do not generate a new key.
 - Migration fails: the service will not continue with a partially migrated schema. Fix the cause and restart it; do not manually edit immutable turns.
