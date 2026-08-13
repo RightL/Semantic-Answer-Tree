@@ -62,12 +62,11 @@ test("serves session, page, and one-turn query shapes after authenticated public
       "id",
       "latestSequence",
       "latestTurnId",
-      "temporary",
       "title",
       "turnCount",
       "updatedAt",
     ]);
-    assert.equal(sessions[0].temporary, false);
+    assert.equal(sessions[0].id, publication().sessionId);
 
     const page = await (
       await fetch(`${baseUrl}/api/sessions/${acknowledgment.sessionId}/turns?limit=20`)
@@ -86,42 +85,37 @@ test("serves session, page, and one-turn query shapes after authenticated public
   }
 });
 
-test("marks only Codex temporary-source sessions as temporary without exposing the source key", async () => {
+test("uses the agent-chosen sessionId directly without identity classifications", async () => {
   const { directory, service, baseUrl } = await startService();
   try {
     await publish(
       baseUrl,
       publication({
-        sourceSessionKey: "codex-temporary:v1:turn-123",
-        sourceTurnKey: "turn-123",
-        idempotencyKey: "idempotency:temporary:turn-123",
+        sessionId: "sa-main-session",
+        idempotencyKey: "idempotency:main",
       }),
     );
     await publish(
       baseUrl,
       publication({
-        sourceSessionKey: "codex-temporary:v2:turn-456",
-        sourceTurnKey: "turn-456",
-        idempotencyKey: "idempotency:durable:turn-456",
+        sessionId: "sa-side-chat",
+        idempotencyKey: "idempotency:side-chat",
       }),
     );
 
     const sessions = (await (await fetch(`${baseUrl}/api/sessions`)).json()).sessions;
     assert.equal(sessions.length, 2);
-    const temporary = sessions.find((session) => session.temporary);
-    const durable = sessions.find((session) => !session.temporary);
-    assert.ok(temporary);
-    assert.ok(durable);
-    assert.doesNotMatch(JSON.stringify(sessions), /sourceSessionKey|source_session_key|turn-123/);
+    assert.deepEqual(new Set(sessions.map((session) => session.id)), new Set(["sa-main-session", "sa-side-chat"]));
+    assert.equal(sessions.some((session) => Object.hasOwn(session, "temporary")), false);
 
     const historyResponse = await fetch(
-      `${baseUrl}/api/history?sourceSessionKey=${encodeURIComponent("codex-temporary:v1:turn-123")}`,
+      `${baseUrl}/api/history?sessionId=${encodeURIComponent("sa-side-chat")}`,
       { headers: authenticatedHeaders() },
     );
     assert.equal(historyResponse.status, 200);
     const history = await historyResponse.json();
-    assert.equal(history.session.temporary, true);
-    assert.doesNotMatch(JSON.stringify(history.session), /sourceSessionKey|source_session_key|turn-123/);
+    assert.equal(history.session.id, "sa-side-chat");
+    assert.equal(Object.hasOwn(history.session, "temporary"), false);
   } finally {
     await service.stop();
     await removeTemporaryDirectory(directory);
@@ -148,7 +142,7 @@ test("requires the capability before parsing publication bodies and protects his
     assert.deepEqual((await (await fetch(`${baseUrl}/api/sessions`)).json()).sessions, []);
 
     const history = await fetch(
-      `${baseUrl}/api/history?sourceSessionKey=${encodeURIComponent("session:test")}`,
+      `${baseUrl}/api/history?sessionId=${encodeURIComponent("session:test")}`,
     );
     assert.equal(history.status, 401);
   } finally {
@@ -248,7 +242,6 @@ test("SSE emits committed identifiers only and replays persisted events after La
       await publish(
         baseUrl,
         publication({
-          sourceTurnKey: "turn:2",
           idempotencyKey: "idempotency:test:2",
           document: semanticDocument("Second committed answer"),
         }),

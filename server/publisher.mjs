@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
@@ -6,7 +7,6 @@ import {
   resolveTokenFilePath,
   validateCapabilityToken,
 } from "./capability-token.mjs";
-import { SessionIdentityProvider } from "./session-identity.mjs";
 
 export const SEMANTIC_ANSWER_SERVICE_URL_ENV = "SEMANTIC_ANSWER_SERVICE_URL";
 export const DEFAULT_SERVICE_URL = "http://127.0.0.1:4318";
@@ -212,7 +212,7 @@ export class SemanticAnswerServiceClient {
   }
 
   readHistory(argumentsValue) {
-    const query = new URLSearchParams({ sourceSessionKey: argumentsValue.sourceSessionKey });
+    const query = new URLSearchParams({ sessionId: argumentsValue.sessionId });
     if (argumentsValue.beforeSequence !== undefined) {
       query.set("beforeSequence", String(argumentsValue.beforeSequence));
     }
@@ -236,6 +236,20 @@ function requireObject(argumentsValue) {
   return argumentsValue;
 }
 
+function requireExactFields(input, allowedFields) {
+  if (Object.keys(input).some((field) => !allowedFields.has(field))) {
+    throw Object.assign(new Error("Tool arguments contain unknown fields."), {
+      code: "invalid_tool_input",
+    });
+  }
+}
+
+function requireSessionId(input) {
+  if (typeof input.sessionId !== "string" || input.sessionId.trim().length === 0) {
+    throw Object.assign(new Error("sessionId is required."), { code: "invalid_tool_input" });
+  }
+}
+
 function resultFromError(error, fallbackCode) {
   return toolError(
     typeof error?.code === "string" ? error.code : fallbackCode,
@@ -247,17 +261,12 @@ function resultFromError(error, fallbackCode) {
 export async function executePublishSemanticAnswer(
   argumentsValue,
   client,
-  identityProvider = new SessionIdentityProvider(),
 ) {
   try {
-    const input = identityProvider.bind(requireObject(argumentsValue));
-    if (typeof input.idempotencyKey !== "string" || input.idempotencyKey.trim().length === 0) {
-      return toolError(
-        "missing_idempotency_key",
-        "No idempotency key was supplied. Configure the Codex hook or pass idempotencyKey explicitly.",
-      );
-    }
-    const acknowledgment = await client.publish(input);
+    const input = requireObject(argumentsValue);
+    requireExactFields(input, new Set(["sessionId", "requestSummary", "document"]));
+    requireSessionId(input);
+    const acknowledgment = await client.publish({ ...input, idempotencyKey: randomUUID() });
     return toolResult(acknowledgment);
   } catch (error) {
     return resultFromError(error, "publish_failed");
@@ -267,10 +276,11 @@ export async function executePublishSemanticAnswer(
 export async function executeReadSemanticHistory(
   argumentsValue,
   client,
-  identityProvider = new SessionIdentityProvider(),
 ) {
   try {
-    const input = identityProvider.bind(requireObject(argumentsValue));
+    const input = requireObject(argumentsValue);
+    requireExactFields(input, new Set(["sessionId", "beforeSequence", "limit"]));
+    requireSessionId(input);
     return toolResult(await client.readHistory(input));
   } catch (error) {
     return resultFromError(error, "history_read_failed");

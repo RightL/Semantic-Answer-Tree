@@ -5,7 +5,6 @@ import {
   SemanticAnswerServiceClient,
   executePublishSemanticAnswer,
 } from "../../server/publisher.mjs";
-import { SessionIdentityProvider } from "../../server/session-identity.mjs";
 import { publication } from "./backend-test-helpers.mjs";
 
 const ACKNOWLEDGMENT = {
@@ -96,10 +95,14 @@ test("an unconfirmed acknowledgement becomes a safe tool failure", async () => {
       return response({ ok: true, sessionId: "session-1" });
     },
   });
+  const envelope = publication();
   const result = await executePublishSemanticAnswer(
-    publication(),
+    {
+      sessionId: envelope.sessionId,
+      requestSummary: envelope.requestSummary,
+      document: envelope.document,
+    },
     client,
-    new SessionIdentityProvider({ environment: {} }),
   );
 
   assert.equal(calls, 2);

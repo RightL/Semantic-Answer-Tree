@@ -31,11 +31,11 @@ Opening an expansion is a local viewer action. It never calls a model.
 
 ## System boundaries
 
-Semantic Answer is a local, append-only transcript, not a chat system or cloud document store. Source identity, request summary, idempotency, authentication, storage, and transport surround the document and must not be added to it.
+Semantic Answer is a local, append-only transcript, not a chat system or cloud document store. Session identity, request summary, idempotency, authentication, storage, and transport surround the document and must not be added to it.
 
 Core invariants:
 
-- One `sourceSessionKey` identifies one viewer session.
+- One agent-chosen `sessionId` identifies one viewer session.
 - Every successful publication appends exactly one immutable turn.
 - The SQLite transaction commits before durable acknowledgement and the `turn-published` notification.
 - Repeating the same `idempotencyKey` with the identical envelope in one session returns the original acknowledgement without appending or emitting again.
@@ -45,14 +45,12 @@ Core invariants:
 ```mermaid
 flowchart LR
   C["Codex"]
-  H["PreToolUse session hook"]
   M["Thin MCP adapter"]
   S["Loopback HTTP service"]
   D[("SQLite transcript · WAL")]
   V["Semantic Answer viewer"]
 
-  H -->|"inject session · turn · idempotency"| M
-  C -->|"publish · compact history"| M
+  C -->|"fixed session ID · publish · history"| M
   M -->|"HTTP · Bearer token"| S
   S -->|"transaction · migrations"| D
   S -->|"turn-published IDs"| V
@@ -89,12 +87,12 @@ Primary records:
 
 | Record | Purpose |
 | --- | --- |
-| `sessions` | Identifies a transcript by unique source session and stores title and time metadata. |
-| `turns` | Stores request summary, canonical answer JSON, hash, source turn, idempotency data, and a monotonically increasing per-session sequence. |
+| `sessions` | Identifies a transcript by the agent-chosen session ID and stores title and time metadata. |
+| `turns` | Stores request summary, canonical answer JSON, hash, idempotency data, and a monotonically increasing per-session sequence. |
 | `event_log` | Stores committed `turn-published` identifiers for event replay. |
 | `schema_migrations` | Records each successfully applied database migration. |
 
-Database triggers reject turn updates and deletions. Unique constraints protect per-session sequence, per-session idempotency key, and each nonempty source-turn key. Answers and request summaries are plaintext; immutable history is not encryption at rest.
+Database triggers reject turn updates and deletions. Unique constraints protect per-session sequence and per-session idempotency keys. Answers and request summaries are plaintext; immutable history is not encryption at rest.
 
 At startup the service applies pending `server/migrations/NNN_name.sql` files in order. Each migration and its `schema_migrations` record share one `BEGIN IMMEDIATE` transaction. Failure rolls back that migration and prevents startup with a partially changed database.
 
@@ -117,23 +115,11 @@ Compact agent history includes each answer's `version`, `title`, and `body`, wit
 
 An event connection emits `ready`, then `turn-published` events and heartbeats. A publication event contains only `eventId`, `sessionId`, `turnId`, and `sequence`; the viewer reads the committed turn by ID. Reconnection from a known event ID can replay at most 100 later events. An unknown ID triggers no replay.
 
-## Session identity and temporary side chats
+## Session identity
 
-A standard-input/output MCP process must not be treated as one conversation. Identity cannot be inferred from process ID, working directory, browser tab, or the most recent session.
+At the first Semantic Answer call in a Codex session, the agent chooses one opaque `sessionId` and reuses it for every publication and history read in that session. A value such as `sa-` plus a random UUID avoids accidental collisions without coupling the transcript to Codex internals.
 
-The bundled `PreToolUse` hook injects:
-
-- `sourceSessionKey = "codex:" + session_id`;
-- `sourceTurnKey = turn_id`;
-- `idempotencyKey = SHA-256("codex:" + session_id + ":" + turn_id)`.
-
-The `codex:` namespace separates Codex identities from manual bindings. The hook reads only supplied identifiers and tool input; it does not read or upload transcripts.
-
-When a one-off side chat has `turn_id` but no stable `session_id`, the hook derives a hashed source key in the disjoint `codex-temporary:v1:` namespace. Requests within that turn remain stable across tool-use identifiers and retries. Different turns remain separate, and the side chat never impersonates or merges into a main task.
-
-Session responses expose only `temporary: true` for this namespace, not the source key. The viewer displays `Temporary`. The label describes identity scope, not automatic deletion; the turn remains append-only.
-
-An App Server wrapper should use `thread.id` as the conversation key and `turn.id` as the turn key. A manually configured `SEMANTIC_ANSWER_SESSION_KEY` is a last resort and does not follow tasks or forks automatically.
+A side chat chooses a separate ID and never borrows the main task's ID. There is no hook, temporary-session namespace, turn key, environment binding, or process-derived identity.
 
 ## Authentication and delivery
 
@@ -141,7 +127,7 @@ Writes and agent history reads use `Authorization: Bearer <token>`. `SEMANTIC_AN
 
 The token must contain at least 32 non-whitespace characters. Never place it in an answer, request summary, log, repository, browser-exposed variable, or hosted bundle. Configure the HTTP service and MCP adapter to use the same absolute token path.
 
-The adapter gives each loopback publication attempt a ten-second deadline. If delivery is ambiguous, it retries once with the exact serialized envelope and idempotency key. A first request that committed will therefore return its original acknowledgement instead of creating another turn.
+For each publish tool call, the adapter creates an internal idempotency key, serializes the envelope once, and gives each loopback attempt a ten-second deadline. If delivery is ambiguous, it retries once with that exact envelope. A first request that committed therefore returns its original acknowledgement instead of creating another turn.
 
 ## Hosted demonstration and private data
 

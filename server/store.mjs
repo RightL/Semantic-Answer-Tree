@@ -5,7 +5,6 @@ import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 
 import { assertPublicationEnvelope } from "./validation.mjs";
-import { isTemporarySourceSessionKey } from "./identity-namespaces.mjs";
 
 export const SEMANTIC_ANSWER_DB_ENV = "SEMANTIC_ANSWER_DB";
 export const DEFAULT_DATABASE_PATH = path.join(
@@ -70,7 +69,6 @@ function mapSession(row) {
   return {
     id: row.id,
     title: row.title,
-    temporary: isTemporarySourceSessionKey(row.source_session_key),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     archivedAt: row.archived_at ?? null,
@@ -233,15 +231,15 @@ export class SemanticTranscriptStore {
     try {
       let session = this.#database
         .prepare("SELECT id FROM sessions WHERE source_session_key = ?")
-        .get(envelope.sourceSessionKey);
+        .get(envelope.sessionId);
       if (!session) {
-        const sessionId = randomUUID();
+        const sessionId = envelope.sessionId;
         const title = (envelope.document.title.trim() || envelope.requestSummary.trim()).slice(0, 240);
         this.#database
           .prepare(
             "INSERT INTO sessions(id, source_session_key, title, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
           )
-          .run(sessionId, envelope.sourceSessionKey, title, now, now);
+          .run(sessionId, envelope.sessionId, title, now, now);
         session = { id: sessionId };
       }
 
@@ -267,18 +265,6 @@ export class SemanticTranscriptStore {
         return acknowledgment;
       }
 
-      if (envelope.sourceTurnKey !== undefined) {
-        const sourceTurn = this.#database
-          .prepare("SELECT id FROM turns WHERE session_id = ? AND source_turn_key = ?")
-          .get(session.id, envelope.sourceTurnKey);
-        if (sourceTurn) {
-          throw new SemanticTranscriptConflictError(
-            "source_turn_conflict",
-            "The source turn key is already bound to another immutable publication.",
-          );
-        }
-      }
-
       const latest = this.#database
         .prepare("SELECT COALESCE(MAX(sequence), 0) AS sequence FROM turns WHERE session_id = ?")
         .get(session.id);
@@ -288,15 +274,14 @@ export class SemanticTranscriptStore {
       this.#database
         .prepare(`
           INSERT INTO turns(
-            id, session_id, sequence, source_turn_key, request_summary, answer_json,
+            id, session_id, sequence, request_summary, answer_json,
             answer_hash, idempotency_key, publication_hash, created_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         `)
         .run(
           turnId,
           session.id,
           sequence,
-          envelope.sourceTurnKey ?? null,
           envelope.requestSummary,
           answerJson,
           answerHash,
@@ -426,13 +411,13 @@ export class SemanticTranscriptStore {
     return mapFullTurn(row);
   }
 
-  readHistory(sourceSessionKey, options = {}) {
+  readHistory(sessionId, options = {}) {
     this.#assertOpen();
     const beforeSequence = optionalSequence(options.beforeSequence, "beforeSequence");
     const limit = clampLimit(options.limit, 10, 50);
     const session = this.#database
       .prepare("SELECT id, source_session_key, title, created_at, updated_at, archived_at FROM sessions WHERE source_session_key = ?")
-      .get(sourceSessionKey);
+      .get(sessionId);
     if (!session) {
       throw new SemanticTranscriptNotFoundError("session_not_found", "Session not found.");
     }
@@ -450,7 +435,6 @@ export class SemanticTranscriptStore {
       session: {
         id: session.id,
         title: session.title,
-        temporary: isTemporarySourceSessionKey(session.source_session_key),
         createdAt: session.created_at,
         updatedAt: session.updated_at,
         archivedAt: session.archived_at ?? null,

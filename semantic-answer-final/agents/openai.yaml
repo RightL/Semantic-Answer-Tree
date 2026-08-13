@@ -1,4 +1,4 @@
 interface:
   display_name: "Semantic Answer"
   short_description: "Publish concise answers with optional detail"
-  default_prompt: "Use $semantic-answer-final to publish the final answer with optional detail exactly where readers may need it."
+  default_prompt: "Use $semantic-answer-final to choose and reuse one session ID, then publish the final answer with optional detail exactly where readers may need it."

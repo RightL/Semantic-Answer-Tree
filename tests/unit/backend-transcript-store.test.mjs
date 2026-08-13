@@ -25,15 +25,13 @@ test("separates interleaved sessions and preserves monotonic append order across
     const a1 = store.publish(publication());
     const b1 = store.publish(
       publication({
-        sourceSessionKey: "session:other",
-        sourceTurnKey: "turn:b1",
+        sessionId: "session:other",
         idempotencyKey: "idem:b1",
         document: semanticDocument("Other session", "Other"),
       }),
     );
     const a2 = store.publish(
       publication({
-        sourceTurnKey: "turn:2",
         idempotencyKey: "idempotency:test:2",
         document: semanticDocument("Second A"),
       }),
@@ -74,8 +72,7 @@ test("identical retries return the exact acknowledgment without another turn or 
       document: envelope.document,
       idempotencyKey: envelope.idempotencyKey,
       requestSummary: envelope.requestSummary,
-      sourceTurnKey: envelope.sourceTurnKey,
-      sourceSessionKey: envelope.sourceSessionKey,
+      sessionId: envelope.sessionId,
     });
     assert.deepEqual(retryWithDifferentObjectOrder, first);
     assert.equal(store.listSessions()[0].turnCount, 1);
@@ -89,15 +86,6 @@ test("identical retries return the exact acknowledgment without another turn or 
         }),
       (error) =>
         error instanceof SemanticTranscriptConflictError && error.code === "idempotency_conflict",
-    );
-    assert.throws(
-      () =>
-        store.publish({
-          ...envelope,
-          idempotencyKey: "different-idempotency-key",
-        }),
-      (error) =>
-        error instanceof SemanticTranscriptConflictError && error.code === "source_turn_conflict",
     );
     assert.equal(store.listSessions()[0].turnCount, 1);
     assert.equal(events.length, 1);
@@ -167,7 +155,6 @@ test("paginates older and newer turns chronologically with honest boundaries", a
     for (let index = 1; index <= 7; index += 1) {
       const acknowledgment = store.publish(
         publication({
-          sourceTurnKey: `turn:${index}`,
           idempotencyKey: `idem:${index}`,
           requestSummary: `Request ${index}`,
           document: semanticDocument(`Answer ${index}`),
@@ -215,7 +202,7 @@ test("history omits expansion content while one-turn lookup returns the exact im
       },
     };
     const acknowledgment = store.publish(publication({ document }));
-    const history = store.readHistory("session:test");
+    const history = store.readHistory("sa-session-test");
     assert.equal(Object.hasOwn(history, "detail"), false);
     assert.deepEqual(history.turns[0].answer, {
       version: 1,
@@ -246,7 +233,6 @@ test("identical expansion IDs remain scoped to their immutable turn", async () =
     );
     const second = store.publish(
       publication({
-        sourceTurnKey: "turn:2",
         idempotencyKey: "idempotency:test:2",
         document: answer("Second scope", "Definition in the second turn."),
       }),

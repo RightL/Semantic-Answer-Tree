@@ -28,7 +28,11 @@ test("runtime Semantic Answer skill stays concise and preserves the linear-answe
   assert.match(skill, /repair only the reported issue and retry once/i);
   assert.match(
     skill,
-    /one-off side chat[\s\S]*isolated `Temporary` session[\s\S]*never guess or reuse the main task/i,
+    /first Semantic Answer call[\s\S]*choose one opaque `sessionId`[\s\S]*reuse it for every `publish_semantic_answer` and `read_semantic_history` call/i,
+  );
+  assert.match(
+    skill,
+    /side chat chooses its own `sessionId`[\s\S]*never copy or reuse the main task's ID/i,
   );
   assert.match(
     skill,
@@ -42,7 +46,7 @@ test("runtime Semantic Answer skill stays concise and preserves the linear-answe
   assert.doesNotMatch(skill, /root|children|terms|term:|tree|density|expand all|collapse all/i);
   assert.doesNotMatch(
     skill,
-    /PublicationEnvelope|Bearer token|POST \/api\/publish|same idempotency key/i,
+    /PublicationEnvelope|Bearer token|POST \/api\/publish|same idempotency key|hook|Temporary session/i,
     "the runtime skill must not carry the deterministic transport protocol",
   );
 });

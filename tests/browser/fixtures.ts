@@ -105,17 +105,15 @@ export async function publishTurn(
     document?: SemanticAnswer;
     idempotencyKey?: string;
     requestSummary?: string;
-    sourceSessionKey: string;
-    sourceTurnKey?: string;
+    sessionId: string;
   },
 ): Promise<PublishedTurn> {
-  const turnKey = options.sourceTurnKey ?? uniqueKey("turn");
+  const turnKey = uniqueKey("turn");
   const document = options.document ?? semanticAnswer(turnKey);
   const requestSummary = options.requestSummary ?? `Request for ${turnKey}`;
   const response = await request.post(`${apiBaseUrl()}/api/publish`, {
     data: {
-      sourceSessionKey: options.sourceSessionKey,
-      sourceTurnKey: turnKey,
+      sessionId: options.sessionId,
       requestSummary,
       document,
       idempotencyKey: options.idempotencyKey ?? `idem-${turnKey}`,
@@ -138,7 +136,7 @@ export async function publishTurn(
 
 export async function publishMany(
   request: APIRequestContext,
-  sourceSessionKey: string,
+  sessionId: string,
   count: number,
   options: {
     concurrency?: number;
@@ -153,8 +151,8 @@ export async function publishMany(
       publishTurn(request, {
         document: semanticAnswer(label, { deepCanary: options.deepCanary }),
         requestSummary: `Summarize ${label}`,
-        sourceSessionKey,
-        sourceTurnKey: `${sourceSessionKey}-turn-${index + 1}`,
+        sessionId,
+        idempotencyKey: `${sessionId}-turn-${index + 1}`,
       });
   });
 

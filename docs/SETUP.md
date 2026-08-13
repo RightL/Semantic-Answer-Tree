@@ -4,7 +4,7 @@
 
 AI answers are often too short or too long, and repeated “explain,” “longer,” and “shorter” turns are an awkward way to control detail. Semantic Answer publishes a concise, complete Markdown answer with optional explanation attached exactly where a reader may want it.
 
-The default installation is local-first. Every successful publication becomes an immutable turn in a local transcript. Sessions, source identity, request summaries, idempotency, and authentication belong to the publication protocol; they are not fields in the `SemanticAnswer` v1 document.
+The default installation is local-first. Every successful publication becomes an immutable turn in a local transcript. Session identity, request summaries, idempotency, and authentication belong to the publication protocol; they are not fields in the `SemanticAnswer` v1 document.
 
 ## 1. Install and start
 
@@ -123,8 +123,6 @@ The defaults work from the project root. For regular use, prefer absolute databa
 | `SEMANTIC_ANSWER_SERVICE_URL` | `http://127.0.0.1:4318` | MCP adapter. Must be a loopback HTTP origin with no path, query, or credentials. |
 | `SEMANTIC_ANSWER_PORT` | `4318` | HTTP service listening port. |
 | `NEXT_PUBLIC_SEMANTIC_ANSWER_API` | `http://127.0.0.1:4318` | Origin from which the viewer reads sessions, turns, and events. Set before development startup or production build. |
-| `SEMANTIC_ANSWER_SESSION_KEY` | Not set | Manual MCP binding for one conversation when no hook or wrapper is available. |
-| `SEMANTIC_ANSWER_TURN_KEY` | Not set | Optional turn binding for a dedicated wrapper. It must change for every logical turn. |
 | `SEMANTIC_ANSWER_VIEWER_ORIGINS` | `http://localhost:4173,http://127.0.0.1:4173` | Exact viewer origins allowed by the HTTP service, separated by commas. |
 
 Relative paths resolve against the process working directory. This PowerShell example sets values only for the current terminal:
@@ -200,106 +198,20 @@ The adapter exposes three tools:
 | Tool | Purpose |
 | --- | --- |
 | `publish_semantic_answer` | Validates and appends one turn. Success returns `{ ok: true, sessionId, turnId, sequence }`, not the answer. |
-| `read_semantic_history` | Reads compact `{ version, title, body }` previews for the current source session. |
+| `read_semantic_history` | Reads compact `{ version, title, body }` previews for the supplied session ID. |
 | `read_semantic_turn` | Reads one complete immutable turn by `turnId`. |
 
 Read a small history page first. Read at most one complete prior turn, and only when its expansion content is needed. Do not automatically load large history windows or multiple complete turns.
 
-## 4. Configure the Codex session hook
+## 4. Use one fixed session ID
 
-A standard-input/output MCP configuration does not establish that one process equals one Codex conversation. The included `integration/codex-session-hook.mjs` binds publish and history calls to the current Codex session and turn. The repository does not install `hooks.json`; review and merge the configuration yourself.
+No Codex hook or identity configuration is required.
 
-Use this exact matcher:
+At the first Semantic Answer call in a Codex session, the agent chooses one opaque `sessionId`, such as `sa-` followed by a random UUID. It keeps that exact value in the session context and supplies it to every `publish_semantic_answer` and `read_semantic_history` call in that session.
 
-```text
-^mcp__semantic_answer__(publish_semantic_answer|read_semantic_history)$
-```
+A side chat chooses its own `sessionId`; it never copies the main task's ID. The ID is deliberately independent of Codex task metadata, process IDs, working directories, browser tabs, and the viewer's latest session.
 
-The registration is `semantic-answer`. Codex changes its hyphen to an underscore in the qualified hook `tool_name`.
-
-For a normal task, `PreToolUse` injects:
-
-```text
-sourceSessionKey = "codex:" + session_id
-sourceTurnKey    = turn_id
-idempotencyKey  = SHA-256("codex:" + session_id + ":" + turn_id)
-```
-
-Some one-off side chats provide `turn_id` without a stable `session_id`. The hook derives an isolated, hashed key in the `codex-temporary:v1:` namespace from that turn. Retries remain stable, and the side chat never borrows or merges into the main task's transcript. The viewer exposes only `temporary: true` and a `Temporary` badge, never the source key. Temporary describes isolated identity; the immutable turn remains in local history.
-
-The hook reads only hook standard input and hashes identifiers. It does not read transcripts, files, or the network.
-
-Generate mergeable JSON on Windows:
-
-```powershell
-$nodePath = (Get-Command node).Source
-$hookPath = (Resolve-Path .\integration\codex-session-hook.mjs).Path
-$hookCommand = '"{0}" "{1}"' -f $nodePath, $hookPath
-
-$hookConfig = [ordered]@{
-  description = "Bind Semantic Answer calls to the current Codex session and turn."
-  hooks = [ordered]@{
-    PreToolUse = @(
-      [ordered]@{
-        matcher = "^mcp__semantic_answer__(publish_semantic_answer|read_semantic_history)$"
-        hooks = @(
-          [ordered]@{
-            type = "command"
-            command = $hookCommand
-            commandWindows = $hookCommand
-            timeout = 5
-          }
-        )
-      }
-    )
-  }
-}
-
-$hookConfig | ConvertTo-Json -Depth 10
-```
-
-Generate it on Linux:
-
-```bash
-NODE_PATH="$(command -v node)"
-HOOK_PATH="$(realpath integration/codex-session-hook.mjs)"
-HOOK_COMMAND="$(printf '%q %q' "$NODE_PATH" "$HOOK_PATH")"
-export HOOK_COMMAND
-
-"$NODE_PATH" <<'NODE'
-const config = {
-  description: "Bind Semantic Answer calls to the current Codex session and turn.",
-  hooks: {
-    PreToolUse: [
-      {
-        matcher: "^mcp__semantic_answer__(publish_semantic_answer|read_semantic_history)$",
-        hooks: [
-          {
-            type: "command",
-            command: process.env.HOOK_COMMAND,
-            timeout: 5
-          }
-        ]
-      }
-    ]
-  }
-};
-
-console.log(JSON.stringify(config, null, 2));
-NODE
-```
-
-Merge the output into `~/.codex/hooks.json` or the `.codex/hooks.json` of a trusted project. Keep absolute paths because the hook runs from the task's working directory. After restarting Codex, run `/hooks`, inspect the source, matcher, command, and script, and trust the exact definition. A changed definition must be reviewed again. See the [Codex Hooks documentation](https://learn.chatgpt.com/docs/hooks).
-
-If hook input has neither `session_id` nor `turn_id`, the hook does not invent identity. The service rejects the call unless an explicit binding and turn-specific idempotency key are supplied.
-
-Alternative identity strategies:
-
-- App Server wrapper: use `thread.id` as the conversation key and `turn.id` as the turn key. Do not use `thread.sessionId` as fork identity; a persisted fork receives a new `thread.id` but retains the root's `thread.sessionId`. See the [Codex App Server documentation](https://learn.chatgpt.com/docs/app-server).
-- Temporary side chat: use the bundled hook's isolated binding when only `turn_id` exists. Never substitute an ID copied from a main task.
-- Manual binding: only when no hook or wrapper is available, configure a unique `SEMANTIC_ANSWER_SESSION_KEY` for that conversation. It does not follow a task or fork automatically.
-
-`SEMANTIC_ANSWER_TURN_KEY` must change for every logical turn. Never set it statically in a reused MCP configuration. Never infer conversation identity from a working directory, process ID, browser tab, or “latest session.”
+The MCP adapter creates idempotency metadata internally for each publication and reuses it only for its bounded ambiguous-delivery retry. The agent supplies no turn key or idempotency key.
 
 ## 5. Install `semantic-answer-final`
 
@@ -326,7 +238,7 @@ Restart Codex if the skill does not appear. See the [official Skills documentati
 Use $semantic-answer-final to publish the final answer to Semantic Answer.
 ```
 
-The skill keeps the main body concise and complete, uses sparse `[visible text](zoom:id)` anchors, and keeps decision-changing caveats visible. After durable `{ ok: true, sessionId, turnId, sequence }` acknowledgement, it outputs only:
+The skill chooses and retains one `sessionId` for the Codex session, keeps the main body concise and complete, uses sparse `[visible text](zoom:id)` anchors, and keeps decision-changing caveats visible. After durable `{ ok: true, sessionId, turnId, sequence }` acknowledgement, it outputs only:
 
 ```text
 Rendered in Semantic Answer.
@@ -344,7 +256,7 @@ Routes:
 | `GET /api/sessions` | None | Lists viewer sessions. |
 | `GET /api/sessions/:id/turns?beforeSequence=&afterSequence=&limit=20` | None | Reads one paginated transcript. |
 | `GET /api/turns/:id` | None | Reads one complete immutable turn. |
-| `GET /api/history?sourceSessionKey=&beforeSequence=&limit=` | Bearer | Reads compact answer previews for an agent. |
+| `GET /api/history?sessionId=&beforeSequence=&limit=` | Bearer | Reads compact answer previews for an agent. |
 | `POST /api/publish` | Bearer | Validates and appends a publication envelope. |
 | `GET /events` | None | Sends `ready`, then identifier-only `turn-published` events and heartbeats. |
 
@@ -379,8 +291,7 @@ The publication endpoint accepts a complete envelope, not a bare document:
 
 ```json
 {
-  "sourceSessionKey": "manual:conversation-123",
-  "sourceTurnKey": "turn-7",
+  "sessionId": "sa-conversation-123",
   "requestSummary": "The user asked for a concise comparison of two solver choices.",
   "document": {
     "version": 1,
@@ -398,7 +309,7 @@ The publication endpoint accepts a complete envelope, not a bare document:
 }
 ```
 
-`sourceTurnKey` may be omitted; the other four envelope fields are required after identity resolution.
+Direct HTTP callers supply all four envelope fields. The MCP adapter accepts only `sessionId`, `requestSummary`, and `document`; it creates `idempotencyKey` internally.
 
 PowerShell publication example:
 
@@ -433,7 +344,7 @@ An event connection first receives `ready` with `{ "ok": true }`. Each `turn-pub
 
 The service rejects unknown fields, unresolved or unused expansions, nested anchors, oversized input, abnormal identity or summary lengths, and malformed media types. Validation errors contain sanitized paths and messages, never rejected answer text. Markdown is sanitized before rendering.
 
-Common statuses are `400` for an invalid query or envelope, `404` for not found, `405` for an unsupported method, `409` for an idempotency or source-turn conflict, `413` for an oversized body, `415` for non-JSON media, and `500` for an internal error. Errors use `{ ok: false, error: { code, message, ... } }`.
+Common statuses are `400` for an invalid query or envelope, `404` for not found, `405` for an unsupported method, `409` for an idempotency conflict, `413` for an oversized body, `415` for non-JSON media, and `500` for an internal error. Errors use `{ ok: false, error: { code, message, ... } }`.
 
 ## 7. Database startup and reset
 
@@ -455,10 +366,9 @@ The application loads no remote images, telemetry, or remote fonts. Runtime data
 
 - `401`: make the HTTP service and MCP adapter use the same `SEMANTIC_ANSWER_TOKEN` or absolute `SEMANTIC_ANSWER_TOKEN_FILE`.
 - `403 origin_forbidden`: add the exact viewer origin to `SEMANTIC_ANSWER_VIEWER_ORIGINS`.
-- `missing_session_identity`: enable and trust the hook. A side chat with `turn_id` gets an isolated `Temporary` session; if neither identity exists, use a manual session binding only when you accept that limitation.
-- Hook does not run: inspect it with `/hooks` and confirm `^mcp__semantic_answer__(publish_semantic_answer|read_semantic_history)$`.
+- `invalid_tool_input` for a missing session: choose one opaque `sessionId` and reuse it for publish and history calls in the current Codex session.
 - MCP connects but publishing fails: confirm `npm run local` is running, check `SEMANTIC_ANSWER_SERVICE_URL`, and request `GET /health`.
-- A timeout leaves delivery uncertain: retry only with the identical envelope and idempotency key.
+- A timeout leaves delivery uncertain: let the MCP adapter perform its one identical-envelope retry.
 - Database migration fails: fix the cause and restart; do not edit immutable turns.
 - Live updates stop: check `GET /events` and `NEXT_PUBLIC_SEMANTIC_ANSWER_API`. Committed turns remain readable.
 - Durable acknowledgement is missing: do not output `Rendered in Semantic Answer.` Give the complete answer in the conversation.

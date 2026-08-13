@@ -21,39 +21,16 @@ import {
   zoomAnchor,
 } from "./fixtures";
 
-test("temporary Codex sessions are visibly labeled without labeling durable sessions", async ({
-  page,
-  request,
-}) => {
-  const temporary = await publishTurn(request, {
-    sourceSessionKey: `codex-temporary:v1:${uniqueKey("temporary session")}`,
-    sourceTurnKey: uniqueKey("temporary turn"),
-  });
-  const durable = await publishTurn(request, {
-    sourceSessionKey: uniqueKey("durable session"),
-    sourceTurnKey: uniqueKey("durable turn"),
-  });
-
-  await gotoSession(page, temporary.sessionId, temporary.turnId);
-  await expect(page.getByTestId(`temporary-badge-${temporary.sessionId}`)).toHaveText(
-    "Temporary",
-  );
-  await expect(page.getByTestId("active-temporary-badge")).toHaveText("Temporary");
-  await expect(page.getByTestId(`temporary-badge-${durable.sessionId}`)).toHaveCount(0);
-});
-
 test("a background-session publication never steals focus and increments unread", async ({
   page,
   request,
 }) => {
   const active = await publishTurn(request, {
-    sourceSessionKey: uniqueKey("active session"),
-    sourceTurnKey: uniqueKey("active first"),
+    sessionId: uniqueKey("active session"),
   });
   const backgroundKey = uniqueKey("background session");
   const background = await publishTurn(request, {
-    sourceSessionKey: backgroundKey,
-    sourceTurnKey: uniqueKey("background first"),
+    sessionId: backgroundKey,
   });
 
   await gotoSession(page, active.sessionId, active.turnId);
@@ -62,8 +39,7 @@ test("a background-session publication never steals focus and increments unread"
   const unreadBefore = (await unread.count()) ? Number(await unread.textContent()) : 0;
 
   const backgroundUpdate = await publishTurn(request, {
-    sourceSessionKey: backgroundKey,
-    sourceTurnKey: uniqueKey("background update"),
+    sessionId: backgroundKey,
   });
 
   await expect(unread).toHaveText(String(unreadBefore + 1));
@@ -85,8 +61,7 @@ test("an active near-bottom session follows a newly committed turn", async ({
   const appended = await publishTurn(request, {
     document: semanticAnswer("follow appended"),
     requestSummary: "Append while the reader is at the live edge",
-    sourceSessionKey: sessionKey,
-    sourceTurnKey: uniqueKey("follow appended"),
+    sessionId: sessionKey,
   });
 
   await expect(turnCard(page, appended.turnId)).toBeVisible();
@@ -113,8 +88,7 @@ test("an active reader on older content does not jump and can use the new-turn b
   const before = await visibleTurnAnchor(page);
 
   const appended = await publishTurn(request, {
-    sourceSessionKey: sessionKey,
-    sourceTurnKey: uniqueKey("older appended"),
+    sessionId: sessionKey,
   });
 
   await expect(page.getByTestId("new-turn-banner")).toBeVisible();
@@ -206,16 +180,14 @@ test("the closed linear body is readable and word, phrase, sentence, and paragra
       definitionContent: "Definition owned by the older turn.",
     }),
     requestSummary: "The older request summary",
-    sourceSessionKey: sessionKey,
-    sourceTurnKey: uniqueKey("older vocabulary"),
+    sessionId: sessionKey,
   });
   const latest = await publishTurn(request, {
     document: semanticAnswer("latest vocabulary", {
       definitionContent: "Definition owned by the latest turn.",
     }),
     requestSummary: "The latest request summary",
-    sourceSessionKey: sessionKey,
-    sourceTurnKey: uniqueKey("latest vocabulary"),
+    sessionId: sessionKey,
   });
 
   await gotoSession(page, latest.sessionId, latest.turnId);
@@ -285,12 +257,10 @@ test("reload and browser history restore explicit session and turn selection", a
   request,
 }) => {
   const first = await publishTurn(request, {
-    sourceSessionKey: uniqueKey("history A"),
-    sourceTurnKey: uniqueKey("history A turn"),
+    sessionId: uniqueKey("history A"),
   });
   const second = await publishTurn(request, {
-    sourceSessionKey: uniqueKey("history B"),
-    sourceTurnKey: uniqueKey("history B turn"),
+    sessionId: uniqueKey("history B"),
   });
 
   await gotoSession(page, first.sessionId, first.turnId);
@@ -361,8 +331,7 @@ test("switching sessions restores an older paged window and its reading anchor",
     label: "paged restore A",
   });
   const second = await publishTurn(request, {
-    sourceSessionKey: uniqueKey("paged restore B"),
-    sourceTurnKey: uniqueKey("paged restore B turn"),
+    sessionId: uniqueKey("paged restore B"),
   });
   const first = firstTurns.at(-1)!;
   await gotoSession(page, first.sessionId, first.turnId);
@@ -476,8 +445,7 @@ test("a failed near-bottom turn fetch leaves an explicit recovery path", async (
   });
 
   const appended = await publishTurn(request, {
-    sourceSessionKey: sessionKey,
-    sourceTurnKey: uniqueKey("failed fetch appended"),
+    sessionId: sessionKey,
   });
   await expect(page.getByTestId("new-turn-banner")).toBeVisible();
   expect(failedFetches).toBe(1);
@@ -512,8 +480,7 @@ test("scrolling upward during a delayed live fetch cancels automatic follow", as
   });
 
   const appended = await publishTurn(request, {
-    sourceSessionKey: sessionKey,
-    sourceTurnKey: uniqueKey("delayed follow appended"),
+    sessionId: sessionKey,
   });
   await intercepted;
   await setTranscriptReadingPosition(page, 0.3);
@@ -543,12 +510,10 @@ test("a closed mobile session drawer is outside the keyboard tab order", async (
 }) => {
   await page.setViewportSize({ height: 760, width: 390 });
   const first = await publishTurn(request, {
-    sourceSessionKey: uniqueKey("mobile first"),
-    sourceTurnKey: uniqueKey("mobile first turn"),
+    sessionId: uniqueKey("mobile first"),
   });
   await publishTurn(request, {
-    sourceSessionKey: uniqueKey("mobile second"),
-    sourceTurnKey: uniqueKey("mobile second turn"),
+    sessionId: uniqueKey("mobile second"),
   });
   await gotoSession(page, first.sessionId, first.turnId);
 
@@ -578,8 +543,7 @@ test("Copy body stays linear while Copy complete includes each referenced expans
   });
   const turn = await publishTurn(request, {
     document,
-    sourceSessionKey: uniqueKey("copy answer"),
-    sourceTurnKey: uniqueKey("copy answer turn"),
+    sessionId: uniqueKey("copy answer"),
   });
   await context.grantPermissions(["clipboard-read", "clipboard-write"], {
     origin: viewerBaseUrl(),
@@ -609,13 +573,11 @@ test("zoom and copy controls use only the published turn and make no model or co
   const sessionKey = uniqueKey("offline controls");
   const selected = await publishTurn(request, {
     document: semanticAnswer("selected local content"),
-    sourceSessionKey: sessionKey,
-    sourceTurnKey: uniqueKey("selected local content"),
+    sessionId: sessionKey,
   });
   const latest = await publishTurn(request, {
     document: semanticAnswer("unselected latest content"),
-    sourceSessionKey: sessionKey,
-    sourceTurnKey: uniqueKey("unselected latest content"),
+    sessionId: sessionKey,
   });
   await context.grantPermissions(["clipboard-read", "clipboard-write"], {
     origin: viewerBaseUrl(),
@@ -688,8 +650,7 @@ test("desktop details use a fixed right rail without moving the main reading pos
 test("mobile details use a bottom sheet and close with Escape", async ({ page, request }) => {
   await page.setViewportSize({ height: 760, width: 390 });
   const turn = await publishTurn(request, {
-    sourceSessionKey: uniqueKey("mobile details"),
-    sourceTurnKey: uniqueKey("mobile details turn"),
+    sessionId: uniqueKey("mobile details"),
   });
   await gotoSession(page, turn.sessionId, turn.turnId);
   const trigger = zoomAnchor(page, turn.turnId, "tradeoff");
@@ -720,8 +681,7 @@ test("remote Markdown images are represented without making a remote request", a
   });
   const turn = await publishTurn(request, {
     document: semanticAnswer("remote image", { remoteImageUrl: remoteUrl }),
-    sourceSessionKey: uniqueKey("remote image"),
-    sourceTurnKey: uniqueKey("remote image turn"),
+    sessionId: uniqueKey("remote image"),
   });
 
   await gotoSession(page, turn.sessionId, turn.turnId);
@@ -751,12 +711,10 @@ test("two tabs observe shared commits but keep independent reader positions", as
   const secondBefore = await visibleTurnAnchor(secondPage);
 
   await publishTurn(request, {
-    sourceSessionKey: firstKey,
-    sourceTurnKey: uniqueKey("tab A update"),
+    sessionId: firstKey,
   });
   await publishTurn(request, {
-    sourceSessionKey: secondKey,
-    sourceTurnKey: uniqueKey("tab B update"),
+    sessionId: secondKey,
   });
 
   await expect(page.getByTestId("new-turn-banner")).toBeVisible();

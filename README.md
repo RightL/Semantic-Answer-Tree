@@ -31,6 +31,10 @@ The sole public document format is `SemanticAnswer` v1:
 
 The body must stand on its own. Important conclusions and decision-changing caveats stay visible in the body; expansions add explanation, evidence, examples, or implementation detail without repairing an incomplete answer.
 
+## Codex session identity
+
+No hook is required. On its first Semantic Answer call in a Codex session, the agent chooses one opaque `sessionId` and reuses it for every publication and history read in that session. A side chat chooses a different ID. The MCP adapter handles turn-level idempotency internally.
+
 ## Quick start
 
 Node.js `>=22.13.0` is required.
@@ -51,12 +55,12 @@ Open [http://localhost:4173](http://localhost:4173). The local API listens on `h
 - `.semantic-answer/semantic-transcript.sqlite3`
 - `.semantic-answer/capability-token`
 
-Linux is also supported. The [setup guide](docs/SETUP.md) includes native Bash commands, Codex MCP and hook configuration, and a private two-port SSH tunnel from Windows to `lzt@10.21.1.228`.
+Linux is also supported. The [setup guide](docs/SETUP.md) includes native Bash commands, Codex MCP registration, the fixed-session-ID convention, and a private two-port SSH tunnel from Windows to `lzt@10.21.1.228`.
 
 ## Documentation
 
-- [Setup guide](docs/SETUP.md): Windows, Linux, the `10.21.1.228` tunnel, MCP registration, the Codex session hook, skill installation, tokens, API use, and troubleshooting.
-- [Design](docs/DESIGN.md): the answer contract, append-only transcript, sessions, idempotency, authentication, temporary side chats, events, and privacy boundaries.
+- [Setup guide](docs/SETUP.md): Windows, Linux, the `10.21.1.228` tunnel, MCP registration, fixed session IDs, skill installation, tokens, API use, and troubleshooting.
+- [Design](docs/DESIGN.md): the answer contract, append-only transcript, sessions, idempotency, authentication, events, and privacy boundaries.
 - [`semantic-answer-final`](semantic-answer-final/SKILL.md): concise publishing guidance for Codex.
 
 ## Common commands

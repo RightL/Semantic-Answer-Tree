@@ -323,11 +323,11 @@ export function createSemanticAnswerHttpService(options = {}) {
 
       if (pathname === "/api/history" && request.method === "GET") {
         requireAuthorization(request, capability.token);
-        const sourceSessionKey = url.searchParams.get("sourceSessionKey");
-        if (!sourceSessionKey?.trim()) {
-          throw new HttpRequestError(400, "invalid_query", "sourceSessionKey is required.");
+        const sessionId = url.searchParams.get("sessionId");
+        if (!sessionId?.trim()) {
+          throw new HttpRequestError(400, "invalid_query", "sessionId is required.");
         }
-        const history = store.readHistory(sourceSessionKey, {
+        const history = store.readHistory(sessionId, {
           beforeSequence: parsePositiveInteger(url.searchParams.get("beforeSequence"), "beforeSequence"),
           limit: parsePositiveInteger(url.searchParams.get("limit"), "limit"),
         });

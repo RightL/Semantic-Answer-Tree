@@ -11,7 +11,6 @@ CREATE TABLE turns (
   id TEXT PRIMARY KEY,
   session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE RESTRICT,
   sequence INTEGER NOT NULL CHECK (sequence > 0),
-  source_turn_key TEXT,
   request_summary TEXT NOT NULL,
   answer_json TEXT NOT NULL,
   answer_hash TEXT NOT NULL,
@@ -21,10 +20,6 @@ CREATE TABLE turns (
   UNIQUE (session_id, sequence),
   UNIQUE (session_id, idempotency_key)
 );
-
-CREATE UNIQUE INDEX turns_session_source_turn_unique
-  ON turns(session_id, source_turn_key)
-  WHERE source_turn_key IS NOT NULL;
 
 CREATE INDEX turns_session_sequence_desc
   ON turns(session_id, sequence DESC);

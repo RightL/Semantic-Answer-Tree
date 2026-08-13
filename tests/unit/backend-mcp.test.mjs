@@ -38,8 +38,6 @@ test(
         ...process.env,
         SEMANTIC_ANSWER_SERVICE_URL: `http://127.0.0.1:${address.port}`,
         SEMANTIC_ANSWER_TOKEN: token,
-        SEMANTIC_ANSWER_SESSION_KEY: "codex:stdio-session",
-        SEMANTIC_ANSWER_TURN_KEY: "stdio-turn-1",
       },
       stderr: "pipe",
     });
@@ -60,7 +58,11 @@ test(
         [PUBLISH_TOOL_NAME, HISTORY_TOOL_NAME, TURN_TOOL_NAME],
       );
       assert.equal(tools.tools[0].inputSchema.additionalProperties, false);
-      assert.deepEqual(tools.tools[0].inputSchema.required, ["requestSummary", "document"]);
+      assert.deepEqual(tools.tools[0].inputSchema.required, [
+        "sessionId",
+        "requestSummary",
+        "document",
+      ]);
       assert.deepEqual(tools.tools[0].inputSchema.$defs.semanticAnswer.required, [
         "version",
         "title",
@@ -73,37 +75,40 @@ test(
       assert.deepEqual(Object.keys(tools.tools[1].inputSchema.properties).sort(), [
         "beforeSequence",
         "limit",
-        "sourceSessionKey",
+        "sessionId",
       ]);
+      assert.deepEqual(tools.tools[1].inputSchema.required, ["sessionId"]);
       assert.equal(Object.hasOwn(tools.tools[1].inputSchema.properties, "detail"), false);
 
       const secret = "MCP-PUBLISHED-ANSWER-BODY";
       const published = await client.callTool({
         name: PUBLISH_TOOL_NAME,
         arguments: {
+          sessionId: "sa-stdio-session",
           requestSummary: "Publish the MCP integration result",
           document: semanticDocument(secret, "MCP integration"),
-          idempotencyKey: "stdio-idempotency-1",
         },
       });
       assert.equal(published.isError, undefined);
       assert.equal(published.structuredContent.ok, true);
       assert.doesNotMatch(JSON.stringify(published), new RegExp(secret));
 
-      const retried = await client.callTool({
+      const second = await client.callTool({
         name: PUBLISH_TOOL_NAME,
         arguments: {
-          requestSummary: "Publish the MCP integration result",
+          sessionId: "sa-stdio-session",
+          requestSummary: "Publish a second result in the same session",
           document: semanticDocument(secret, "MCP integration"),
-          idempotencyKey: "stdio-idempotency-1",
         },
       });
-      assert.deepEqual(retried.structuredContent, published.structuredContent);
+      assert.equal(second.structuredContent.sessionId, published.structuredContent.sessionId);
+      assert.equal(second.structuredContent.sequence, 2);
 
       const keyCanary = "MCP_PRIVATE_UNKNOWN_KEY_CANARY";
       const invalid = await client.callTool({
         name: PUBLISH_TOOL_NAME,
         arguments: {
+          sessionId: "sa-stdio-session",
           requestSummary: "Invalid publication",
           document: {
             version: 1,
@@ -111,17 +116,19 @@ test(
             body: "Do not echo keys",
             [keyCanary]: true,
           },
-          idempotencyKey: "stdio-invalid-idempotency",
           [keyCanary]: true,
         },
       });
       assert.equal(invalid.isError, true);
-      assert.equal(invalid.structuredContent.error.code, "invalid_publish_envelope");
+      assert.equal(invalid.structuredContent.error.code, "invalid_tool_input");
       assert.doesNotMatch(JSON.stringify(invalid), new RegExp(keyCanary));
 
-      const history = await client.callTool({ name: HISTORY_TOOL_NAME, arguments: {} });
+      const history = await client.callTool({
+        name: HISTORY_TOOL_NAME,
+        arguments: { sessionId: "sa-stdio-session" },
+      });
       assert.equal(Object.hasOwn(history.structuredContent, "detail"), false);
-      assert.equal(history.structuredContent.turns.length, 1);
+      assert.equal(history.structuredContent.turns.length, 2);
       assert.deepEqual(history.structuredContent.turns[0].answer, {
         version: 1,
         title: "MCP integration",

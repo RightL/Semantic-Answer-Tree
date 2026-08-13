@@ -7,14 +7,13 @@ import {
   executeReadSemanticHistory,
   executeReadSemanticTurn,
 } from "./publisher.mjs";
-import { SessionIdentityProvider } from "./session-identity.mjs";
 
 export const PUBLISH_TOOL_NAME = "publish_semantic_answer";
 export const HISTORY_TOOL_NAME = "read_semantic_history";
 export const TURN_TOOL_NAME = "read_semantic_turn";
 
 export const MCP_SERVER_INSTRUCTIONS =
-  "Publish one complete SemanticAnswer v1 per final answer: a concise linear Markdown body with optional sparse expansions anchored by [text](zoom:id) links in the body outside code. Every zoom reference must resolve, every expansion must be referenced, and expansion content must not contain zoom references. The integration owns identity, idempotency, acknowledgement checks, and ambiguous-delivery recovery. A side chat may receive an isolated temporary session; never reuse the main task identity. Correct validation once at most. On confirmed success, reply exactly: Rendered in Semantic Answer. If success is unconfirmed, give the complete ordinary answer instead—never both. History is read-only and omits expansions.";
+  "Choose one opaque sessionId on the first Semantic Answer call in a Codex session; reuse it for every publish and history call there. A side chat chooses a different ID. Publish one complete SemanticAnswer v1 per final answer: a concise, self-contained Markdown body with optional sparse [text](zoom:id) expansions. Every reference must resolve, every expansion must be used, and expansions cannot contain zoom links. The adapter owns idempotency and ambiguous-delivery recovery. Correct validation once at most. After confirmed success, reply exactly: Rendered in Semantic Answer. Without confirmation, give the complete ordinary answer instead—never both. History omits expansions.";
 
 const SEMANTIC_ANSWER_SCHEMA = {
   type: "object",
@@ -55,13 +54,11 @@ const SEMANTIC_EXPANSION_SCHEMA = {
 export const PUBLISH_TOOL_INPUT_SCHEMA = Object.freeze({
   type: "object",
   properties: {
-    sourceSessionKey: { type: "string", minLength: 1, maxLength: 1024 },
-    sourceTurnKey: { type: "string", minLength: 1, maxLength: 1024 },
+    sessionId: { type: "string", minLength: 1, maxLength: 128 },
     requestSummary: { type: "string", minLength: 1, maxLength: 16384 },
     document: { $ref: "#/$defs/semanticAnswer" },
-    idempotencyKey: { type: "string", minLength: 1, maxLength: 512 },
   },
-  required: ["requestSummary", "document"],
+  required: ["sessionId", "requestSummary", "document"],
   additionalProperties: false,
   $defs: {
     semanticAnswer: SEMANTIC_ANSWER_SCHEMA,
@@ -72,10 +69,11 @@ export const PUBLISH_TOOL_INPUT_SCHEMA = Object.freeze({
 export const HISTORY_TOOL_INPUT_SCHEMA = Object.freeze({
   type: "object",
   properties: {
-    sourceSessionKey: { type: "string", minLength: 1, maxLength: 1024 },
+    sessionId: { type: "string", minLength: 1, maxLength: 128 },
     beforeSequence: { type: "integer", minimum: 1 },
     limit: { type: "integer", minimum: 1, maximum: 50 },
   },
+  required: ["sessionId"],
   additionalProperties: false,
 });
 
@@ -107,10 +105,8 @@ export async function runMcpServer(options = {}) {
   ]);
 
   const client = options.client ?? new SemanticAnswerServiceClient(options);
-  const identityProvider =
-    options.identityProvider ?? new SessionIdentityProvider({ environment: options.environment });
   const server = new Server(
-    { name: "semantic-answer", version: "2.0.0" },
+    { name: "semantic-answer", version: "3.0.0" },
     { capabilities: { tools: {} }, instructions: MCP_SERVER_INSTRUCTIONS },
   );
 
@@ -138,10 +134,10 @@ export async function runMcpServer(options = {}) {
 
   server.setRequestHandler(protocol.CallToolRequestSchema, async (request) => {
     if (request.params.name === PUBLISH_TOOL_NAME) {
-      return executePublishSemanticAnswer(request.params.arguments, client, identityProvider);
+      return executePublishSemanticAnswer(request.params.arguments, client);
     }
     if (request.params.name === HISTORY_TOOL_NAME) {
-      return executeReadSemanticHistory(request.params.arguments, client, identityProvider);
+      return executeReadSemanticHistory(request.params.arguments, client);
     }
     if (request.params.name === TURN_TOOL_NAME) {
       return executeReadSemanticTurn(request.params.arguments, client);

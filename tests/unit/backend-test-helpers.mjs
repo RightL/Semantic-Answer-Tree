@@ -18,8 +18,7 @@ export function semanticDocument(content = "A valid answer.", title = "Backend t
 
 export function publication(overrides = {}) {
   return {
-    sourceSessionKey: "session:test",
-    sourceTurnKey: "turn:1",
+    sessionId: "sa-session-test",
     requestSummary: "Test the transcript backend",
     document: semanticDocument(),
     idempotencyKey: "idempotency:test:1",

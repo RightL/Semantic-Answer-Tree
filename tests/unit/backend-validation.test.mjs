@@ -291,8 +291,7 @@ test("rejects recursive live zoom anchors in expansion content but ignores code 
 
 test("accepts the strict publication envelope without changing the document", () => {
   const envelope = {
-    sourceSessionKey: "codex:session-1",
-    sourceTurnKey: "turn-1",
+    sessionId: "codex:session-1",
     requestSummary: "Explain the refresh rule",
     document: fixture(),
     idempotencyKey: "once:session-1:turn-1",
@@ -310,7 +309,7 @@ test("rejects missing identity, empty summary, unknown envelope fields, and nest
     latest: true,
   });
   assert.equal(result.ok, false);
-  assert.ok(result.issues.some((issue) => issue.path === "$.sourceSessionKey"));
+  assert.ok(result.issues.some((issue) => issue.path === "$.sessionId"));
   assert.ok(result.issues.some((issue) => issue.path === "$.requestSummary"));
   assert.ok(result.issues.some((issue) => issue.path === "$.latest"));
   assert.ok(result.issues.some((issue) => issue.path === "$.document.transport"));
@@ -322,7 +321,7 @@ test("safe validation issues redact arbitrary unknown field and expansion IDs", 
   document.expansions["k-holonomy"][keyCanary] = true;
   document.expansions[keyCanary] = { kind: "detail", content: "private" };
   const result = validatePublicationEnvelope({
-    sourceSessionKey: "session",
+    sessionId: "session",
     requestSummary: "summary",
     document,
     idempotencyKey: "idempotency",

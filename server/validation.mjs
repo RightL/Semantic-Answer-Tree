@@ -13,8 +13,7 @@ export const SEMANTIC_ANSWER_LIMITS = Object.freeze({
 });
 
 export const PUBLICATION_ENVELOPE_LIMITS = Object.freeze({
-  maxSourceSessionKeyBytes: 1_024,
-  maxSourceTurnKeyBytes: 1_024,
+  maxSessionIdBytes: 128,
   maxRequestSummaryBytes: 16 * 1_024,
   maxIdempotencyKeyBytes: 512,
   maxEnvelopeOverheadBytes: 64 * 1_024,
@@ -26,8 +25,7 @@ const EXPANSION_KINDS = new Set(["definition", "detail"]);
 const EXPANSION_ID_PATTERN = /^[a-z0-9._-]+$/;
 const MAX_REPORTED_ISSUES = 50;
 const PUBLICATION_FIELDS = new Set([
-  "sourceSessionKey",
-  "sourceTurnKey",
+  "sessionId",
   "requestSummary",
   "document",
   "idempotencyKey",
@@ -407,16 +405,9 @@ export function validatePublicationEnvelope(
   reportUnknownFields(value, PUBLICATION_FIELDS, "$", collector);
   validateRequiredEnvelopeString(
     value,
-    "sourceSessionKey",
-    limits.maxSourceSessionKeyBytes,
+    "sessionId",
+    limits.maxSessionIdBytes,
     collector,
-  );
-  validateRequiredEnvelopeString(
-    value,
-    "sourceTurnKey",
-    limits.maxSourceTurnKeyBytes,
-    collector,
-    true,
   );
   validateRequiredEnvelopeString(
     value,

@@ -36,7 +36,6 @@ export type SemanticAnswer = {
 export type TranscriptSession = {
   id: string;
   title: string;
-  temporary?: boolean;
   createdAt: string;
   updatedAt: string;
   archivedAt: string | null;
@@ -1472,14 +1471,7 @@ export function AnswerViewer({ initialTranscript }: { initialTranscript: DemoTra
           <span><strong>Semantic Answer</strong><small>Read the answer. Open only the detail you need.</small></span>
         </div>
         <div className="active-heading">
-          <span>
-            {activeSession?.title ?? "No session"}
-            {activeSession?.temporary ? (
-              <span className="active-temporary-badge" data-testid="active-temporary-badge" title="Isolated identity; retained in local history">
-                Temporary
-              </span>
-            ) : null}
-          </span>
+          <span>{activeSession?.title ?? "No session"}</span>
           <h1 data-testid="viewer-title">{selectedTurn?.answer.title ?? "Semantic transcript"}</h1>
         </div>
         <span className={`sync-state sync-${syncState}`}><span aria-hidden="true" /> {syncLabel}</span>
@@ -1507,15 +1499,6 @@ export function AnswerViewer({ initialTranscript }: { initialTranscript: DemoTra
                   <span className="session-title">{session.title}</span>
                   <span className="session-meta">
                     {session.turnCount} {session.turnCount === 1 ? "turn" : "turns"}
-                    {session.temporary ? (
-                      <span
-                        className="temporary-session-badge"
-                        data-testid={`temporary-badge-${sanitize(session.id)}`}
-                        title="Isolated identity; retained in local history"
-                      >
-                        Temporary
-                      </span>
-                    ) : null}
                     {unread > 0 ? <strong data-testid={`unread-badge-${sanitize(session.id)}`} aria-label={`${unread} unread turns`}>{unread}</strong> : null}
                   </span>
                 </button>

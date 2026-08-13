@@ -11,6 +11,12 @@ description: >
 
 Prepare one answer that is useful before anything is opened. Generate all optional detail before publishing; opening it never calls the model.
 
+## Keep one session ID
+
+On the first Semantic Answer call in this Codex session, choose one opaque `sessionId`, such as `sa-` followed by a random UUID. Keep that exact value in the session context and reuse it for every `publish_semantic_answer` and `read_semantic_history` call in this session.
+
+A side chat chooses its own `sessionId`. Never copy or reuse the main task's ID.
+
 ## Use prior context sparingly
 
 When an earlier viewer answer is necessary but absent from context, read a small amount of same-session history. Read at most one complete prior turn, and only when its omitted expansion content is needed. Do not load large history windows by default.
@@ -36,9 +42,7 @@ A simple answer may have no expansions.
 
 ## Publish and finish
 
-Publish one logical turn with `requestSummary` and the complete document. The integration owns identity, idempotency, validation, transport, acknowledgement checks, and ambiguous-delivery recovery; do not invent those values unless the tool requires them.
-
-A one-off side chat may receive an isolated `Temporary` session. Publish through that binding and never guess or reuse the main task identity. Temporary describes identity scope; its turn remains in local append-only history.
+Publish one logical turn with the fixed `sessionId`, `requestSummary`, and the complete document. The integration owns idempotency, validation, transport, acknowledgement checks, and ambiguous-delivery recovery.
 
 If publication returns a correctable document-validation error, repair only the reported issue and retry once.
 
