@@ -22,7 +22,6 @@ async function startService(options = {}) {
   const service = createSemanticAnswerHttpService({
     port: 0,
     dbPath: path.join(directory, "transcript.sqlite3"),
-    legacyFilePath: null,
     token: TOKEN,
     ...options,
   });
@@ -71,14 +70,14 @@ test("serves session, page, and one-turn query shapes after authenticated public
     assert.equal(sessions[0].temporary, false);
 
     const page = await (
-      await fetch(`${baseUrl}/api/sessions/${acknowledgment.sessionId}/turns?limit=20&detail=full`)
+      await fetch(`${baseUrl}/api/sessions/${acknowledgment.sessionId}/turns?limit=20`)
     ).json();
     assert.equal(page.turns[0].requestSummary, publication().requestSummary);
     assert.deepEqual(page.turns[0].answer, publication().document);
     assert.equal(page.latestSequence, 1);
 
     const one = await (
-      await fetch(`${baseUrl}/api/turns/${acknowledgment.turnId}?detail=full`)
+      await fetch(`${baseUrl}/api/turns/${acknowledgment.turnId}`)
     ).json();
     assert.equal(one.turn.id, acknowledgment.turnId);
   } finally {
@@ -200,7 +199,8 @@ test("rejects invalid and oversized publications without echoing answer content"
         document: {
           version: 1,
           title: "Invalid",
-          root: { content: secret, [privateKeyCanary]: true },
+          body: secret,
+          [privateKeyCanary]: true,
         },
         [privateKeyCanary]: true,
       }),
@@ -278,7 +278,7 @@ test("SSE emits committed identifiers only and replays persisted events after La
 test("creates and reuses a random token file beside the database", async () => {
   const directory = await makeTemporaryDirectory("token-");
   const dbPath = path.join(directory, "transcript.sqlite3");
-  let service = createSemanticAnswerHttpService({ port: 0, dbPath, legacyFilePath: null });
+  let service = createSemanticAnswerHttpService({ port: 0, dbPath });
   const firstToken = service.token;
   const tokenFilePath = service.tokenFilePath;
   try {
@@ -289,7 +289,7 @@ test("creates and reuses a random token file beside the database", async () => {
       assert.equal(metadata.mode & 0o077, 0);
     }
     await service.stop();
-    service = createSemanticAnswerHttpService({ port: 0, dbPath, legacyFilePath: null });
+    service = createSemanticAnswerHttpService({ port: 0, dbPath });
     assert.equal(service.token, firstToken);
   } finally {
     await service.stop();

@@ -6,6 +6,7 @@ import {
   renderedTurnCards,
   sessionItem,
   uniqueKey,
+  zoomAnchor,
 } from "../browser/fixtures";
 
 test("hundreds of turns stay paginated, bounded, lazy, and interactive", async ({
@@ -62,7 +63,7 @@ test("hundreds of turns stay paginated, bounded, lazy, and interactive", async (
     expect(await renderedTurnCards(page).count()).toBeLessThanOrEqual(80);
   }
 
-  // Structural descendants remain lazy even after paging older turn cards.
+  // Expansion content stays out of the rendered transcript while closed.
   await expect(page.getByText(deepCanary, { exact: true })).toHaveCount(0);
   for (let pageIndex = 0; pageIndex < 5; pageIndex += 1) {
     if (await page.getByTestId(`turn-${latest.turnId}`).count()) break;
@@ -80,11 +81,10 @@ test("hundreds of turns stay paginated, bounded, lazy, and interactive", async (
     expect(await renderedTurnCards(page).count()).toBeLessThanOrEqual(80);
   }
   await expect(page.getByTestId(`turn-${latest.turnId}`)).toBeVisible();
-  await page.getByTestId(`disclosure-${latest.turnId}-0`).click();
-  await page.getByTestId(`disclosure-${latest.turnId}-0-0`).click();
+  await zoomAnchor(page, latest.turnId, "more").click();
   await expect(page.getByText(deepCanary, { exact: true }).last()).toBeVisible();
-  await page.getByTestId(`term-${latest.turnId}-semantic-answer-tree`).click();
-  await expect(page.getByTestId(`term-popover-${latest.turnId}`)).toBeVisible();
+  await zoomAnchor(page, latest.turnId, "semantic-answer").click();
+  await expect(page.getByTestId(`definition-popover-${latest.turnId}`)).toBeVisible();
 
   const backgroundLatest = backgroundTurnSets[0].at(-1)!;
   await sessionItem(page, backgroundLatest.sessionId).click();

@@ -27,7 +27,6 @@ test(
     const service = createSemanticAnswerHttpService({
       port: 0,
       dbPath: path.join(directory, "transcript.sqlite3"),
-      legacyFilePath: null,
       token,
     });
     const address = await service.start();
@@ -48,10 +47,12 @@ test(
 
     try {
       await client.connect(transport);
-      assert.equal(client.getServerVersion()?.name, "semantic-answer-tree");
+      assert.equal(client.getServerVersion()?.name, "semantic-answer");
       assert.equal(client.getInstructions(), MCP_SERVER_INSTRUCTIONS);
-      assert.ok(MCP_SERVER_INSTRUCTIONS.length <= 512);
+      assert.ok(MCP_SERVER_INSTRUCTIONS.length <= 768);
       assert.match(MCP_SERVER_INSTRUCTIONS, /never both/i);
+      assert.match(MCP_SERVER_INSTRUCTIONS, /concise[^.]*body|body[^.]*stand/i);
+      assert.doesNotMatch(MCP_SERVER_INSTRUCTIONS, /tree|term:|density/i);
 
       const tools = await client.listTools();
       assert.deepEqual(
@@ -60,6 +61,21 @@ test(
       );
       assert.equal(tools.tools[0].inputSchema.additionalProperties, false);
       assert.deepEqual(tools.tools[0].inputSchema.required, ["requestSummary", "document"]);
+      assert.deepEqual(tools.tools[0].inputSchema.$defs.semanticAnswer.required, [
+        "version",
+        "title",
+        "body",
+      ]);
+      assert.equal(
+        tools.tools[0].inputSchema.$defs.semanticExpansion.properties.kind.enum.join(","),
+        "definition,detail",
+      );
+      assert.deepEqual(Object.keys(tools.tools[1].inputSchema.properties).sort(), [
+        "beforeSequence",
+        "limit",
+        "sourceSessionKey",
+      ]);
+      assert.equal(Object.hasOwn(tools.tools[1].inputSchema.properties, "detail"), false);
 
       const secret = "MCP-PUBLISHED-ANSWER-BODY";
       const published = await client.callTool({
@@ -92,7 +108,8 @@ test(
           document: {
             version: 1,
             title: "Invalid",
-            root: { content: "Do not echo keys", [keyCanary]: true },
+            body: "Do not echo keys",
+            [keyCanary]: true,
           },
           idempotencyKey: "stdio-invalid-idempotency",
           [keyCanary]: true,
@@ -103,15 +120,19 @@ test(
       assert.doesNotMatch(JSON.stringify(invalid), new RegExp(keyCanary));
 
       const history = await client.callTool({ name: HISTORY_TOOL_NAME, arguments: {} });
-      assert.equal(history.structuredContent.detail, "roots");
+      assert.equal(Object.hasOwn(history.structuredContent, "detail"), false);
       assert.equal(history.structuredContent.turns.length, 1);
-      assert.equal(history.structuredContent.turns[0].answer.root.children, undefined);
+      assert.deepEqual(history.structuredContent.turns[0].answer, {
+        version: 1,
+        title: "MCP integration",
+        body: secret,
+      });
 
       const full = await client.callTool({
         name: TURN_TOOL_NAME,
         arguments: { turnId: published.structuredContent.turnId },
       });
-      assert.equal(full.structuredContent.turn.answer.root.content, secret);
+      assert.equal(full.structuredContent.turn.answer.body, secret);
     } finally {
       await client.close().catch(() => {});
       await service.stop();

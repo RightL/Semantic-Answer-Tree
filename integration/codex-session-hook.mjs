@@ -3,8 +3,8 @@ import { pathToFileURL } from "node:url";
 
 import { TEMPORARY_CODEX_SESSION_PREFIX } from "../server/identity-namespaces.mjs";
 
-const PUBLISH_TOOL = "mcp__semantic_answer_tree__publish_semantic_answer";
-const HISTORY_TOOL = "mcp__semantic_answer_tree__read_semantic_history";
+const PUBLISH_TOOL = "mcp__semantic_answer__publish_semantic_answer";
+const HISTORY_TOOL = "mcp__semantic_answer__read_semantic_history";
 
 function nonEmptyString(value) {
   return typeof value === "string" && value.trim().length > 0;
@@ -26,7 +26,7 @@ export function deterministicCodexIdempotencyKey(sessionId, turnId) {
 
 function temporaryCodexIdentity(turnId) {
   const digest = createHash("sha256")
-    .update(`semantic-answer-tree:temporary-session:v1:${turnId}`)
+    .update(`semantic-answer:temporary-session:v1:${turnId}`)
     .digest("hex");
   const sourceSessionKey = `${TEMPORARY_CODEX_SESSION_PREFIX}${digest}`;
   return {
@@ -36,7 +36,7 @@ function temporaryCodexIdentity(turnId) {
   };
 }
 
-/** Transform only Semantic Answer Tree calls; null means a safe hook no-op. */
+/** Transform only Semantic Answer calls; null means a safe hook no-op. */
 export function transformCodexPreToolUse(input) {
   if (!input || typeof input !== "object") {
     return null;

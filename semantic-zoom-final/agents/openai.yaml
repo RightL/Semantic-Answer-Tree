@@ -1,4 +1,0 @@
-interface:
-  display_name: "Semantic Answer Tree"
-  short_description: "Explore every answer, branch by branch"
-  default_prompt: "Use $semantic-zoom-final to publish the final answer as one expandable tree in the configured Semantic Answer Tree transcript."

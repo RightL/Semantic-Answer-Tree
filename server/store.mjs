@@ -1,19 +1,13 @@
 import { createHash, randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, readdirSync } from "node:fs";
+import { mkdirSync, readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 
-import {
-  SemanticAnswerValidationError,
-  assertPublicationEnvelope,
-  assertSemanticAnswer,
-  extractTermReferences,
-} from "./validation.mjs";
+import { assertPublicationEnvelope } from "./validation.mjs";
 import { isTemporarySourceSessionKey } from "./identity-namespaces.mjs";
 
 export const SEMANTIC_ANSWER_DB_ENV = "SEMANTIC_ANSWER_DB";
-export const SEMANTIC_ANSWER_LEGACY_FILE_ENV = "SEMANTIC_ANSWER_LEGACY_FILE";
 export const DEFAULT_DATABASE_PATH = path.join(
   ".semantic-answer",
   "semantic-transcript.sqlite3",
@@ -23,20 +17,8 @@ const DEFAULT_MIGRATIONS_DIRECTORY = path.join(
   path.dirname(fileURLToPath(import.meta.url)),
   "migrations",
 );
-const LEGACY_SOURCE_SESSION_KEY = "legacy-import:previous-single-document-viewer";
-const LEGACY_REQUEST_SUMMARY = "Imported answer from the previous single-document viewer";
-const LEGACY_SESSION_TITLE = "Imported · Previous single-document viewer";
-
 export function resolveDatabasePath(environment = process.env, cwd = process.cwd()) {
   return path.resolve(cwd, environment[SEMANTIC_ANSWER_DB_ENV] || DEFAULT_DATABASE_PATH);
-}
-
-export function resolveLegacyFilePath(environment = process.env, cwd = process.cwd()) {
-  const configuredPath = environment[SEMANTIC_ANSWER_LEGACY_FILE_ENV];
-  if (typeof configuredPath !== "string" || configuredPath.trim() === "") {
-    return null;
-  }
-  return path.resolve(cwd, configuredPath);
 }
 
 export class SemanticTranscriptError extends Error {
@@ -109,38 +91,8 @@ function mapFullTurn(row) {
   };
 }
 
-function compactNode(node, depth) {
-  const result = {
-    content: node.content,
-    childCount: Array.isArray(node.children) ? node.children.length : 0,
-  };
-  if (depth > 0 && Array.isArray(node.children) && node.children.length > 0) {
-    result.children = node.children.map((child) => compactNode(child, depth - 1));
-  }
-  return result;
-}
-
-function compactTerms(answer, root) {
-  const referenced = new Set();
-  const visit = (node) => {
-    for (const termId of extractTermReferences(node.content)) {
-      referenced.add(termId);
-    }
-    for (const child of node.children ?? []) {
-      visit(child);
-    }
-  };
-  visit(root);
-  return Object.fromEntries(
-    [...referenced]
-      .filter((termId) => Object.prototype.hasOwnProperty.call(answer.terms ?? {}, termId))
-      .map((termId) => [termId, answer.terms[termId]]),
-  );
-}
-
-function mapCompactTurn(row, detail) {
+function mapCompactTurn(row) {
   const answer = JSON.parse(row.answer_json);
-  const root = compactNode(answer.root, detail === "frontier" ? 1 : 0);
   return {
     id: row.id,
     sessionId: row.session_id,
@@ -150,8 +102,7 @@ function mapCompactTurn(row, detail) {
     answer: {
       version: 1,
       title: answer.title,
-      root,
-      terms: compactTerms(answer, root),
+      body: answer.body,
     },
   };
 }
@@ -194,16 +145,6 @@ export class SemanticTranscriptStore {
     }
     const configuredDatabase = options.dbPath ?? resolveDatabasePath(options.environment, options.cwd);
     this.dbPath = configuredDatabase === ":memory:" ? ":memory:" : path.resolve(configuredDatabase);
-    const configuredLegacyFilePath =
-      options.legacyFilePath === undefined
-        ? resolveLegacyFilePath(options.environment, options.cwd)
-        : options.legacyFilePath;
-    this.legacyFilePath =
-      configuredLegacyFilePath === null ||
-      configuredLegacyFilePath === false ||
-      configuredLegacyFilePath === ""
-        ? null
-        : path.resolve(options.cwd ?? process.cwd(), configuredLegacyFilePath);
     this.#clock = options.clock ?? (() => new Date().toISOString());
     this.#beforeCommit = options.beforeCommit;
 
@@ -216,7 +157,6 @@ export class SemanticTranscriptStore {
     this.#database.exec("PRAGMA journal_mode = WAL;");
     this.#database.exec("PRAGMA synchronous = FULL;");
     this.#applyMigrations(options.migrationsDirectory ?? DEFAULT_MIGRATIONS_DIRECTORY);
-    this.legacyImport = this.#importLegacyIfPresent();
   }
 
   #assertOpen() {
@@ -260,117 +200,6 @@ export class SemanticTranscriptStore {
           cause: error,
         });
       }
-    }
-  }
-
-  #importLegacyIfPresent() {
-    if (!this.legacyFilePath || !existsSync(this.legacyFilePath)) {
-      return { status: "missing" };
-    }
-    const absolutePath = path.resolve(this.legacyFilePath);
-    const existing = this.#database
-      .prepare("SELECT session_id, turn_id FROM legacy_imports WHERE source_path = ?")
-      .get(absolutePath);
-    if (existing) {
-      return { status: "already-imported", sessionId: existing.session_id, turnId: existing.turn_id };
-    }
-
-    let bytes;
-    let document;
-    try {
-      bytes = readFileSync(absolutePath);
-      document = assertSemanticAnswer(JSON.parse(bytes.toString("utf8")));
-    } catch (error) {
-      if (error instanceof SyntaxError || error instanceof SemanticAnswerValidationError) {
-        return { status: "invalid", code: "invalid_legacy_answer" };
-      }
-      throw error;
-    }
-
-    const contentHash = sha256(bytes);
-    const answerJson = canonicalJson(document);
-    const answerHash = sha256(answerJson);
-    const idempotencyKey = `legacy:${contentHash}`;
-    const now = this.#clock();
-    let sessionId;
-    let turnId;
-
-    this.#database.exec("BEGIN IMMEDIATE;");
-    try {
-      const marker = this.#database
-        .prepare("SELECT session_id, turn_id FROM legacy_imports WHERE source_path = ?")
-        .get(absolutePath);
-      if (marker) {
-        this.#database.exec("COMMIT;");
-        return { status: "already-imported", sessionId: marker.session_id, turnId: marker.turn_id };
-      }
-
-      let session = this.#database
-        .prepare("SELECT id FROM sessions WHERE source_session_key = ?")
-        .get(LEGACY_SOURCE_SESSION_KEY);
-      if (!session) {
-        sessionId = randomUUID();
-        this.#database
-          .prepare(
-            "INSERT INTO sessions(id, source_session_key, title, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
-          )
-          .run(sessionId, LEGACY_SOURCE_SESSION_KEY, LEGACY_SESSION_TITLE, now, now);
-      } else {
-        sessionId = session.id;
-      }
-
-      const importedTurn = this.#database
-        .prepare("SELECT id FROM turns WHERE session_id = ? AND idempotency_key = ?")
-        .get(sessionId, idempotencyKey);
-      if (importedTurn) {
-        turnId = importedTurn.id;
-      } else {
-        const latest = this.#database
-          .prepare("SELECT COALESCE(MAX(sequence), 0) AS sequence FROM turns WHERE session_id = ?")
-          .get(sessionId);
-        const sequence = Number(latest.sequence) + 1;
-        turnId = randomUUID();
-        const publicationHash = sha256(
-          canonicalJson({
-            sourceSessionKey: LEGACY_SOURCE_SESSION_KEY,
-            sourceTurnKey: `legacy:${contentHash}`,
-            requestSummary: LEGACY_REQUEST_SUMMARY,
-            document,
-            idempotencyKey,
-          }),
-        );
-        this.#database
-          .prepare(`
-            INSERT INTO turns(
-              id, session_id, sequence, source_turn_key, request_summary, answer_json,
-              answer_hash, idempotency_key, publication_hash, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-          `)
-          .run(
-            turnId,
-            sessionId,
-            sequence,
-            `legacy:${contentHash}`,
-            LEGACY_REQUEST_SUMMARY,
-            answerJson,
-            answerHash,
-            idempotencyKey,
-            publicationHash,
-            now,
-          );
-      }
-      this.#database
-        .prepare(
-          "INSERT INTO legacy_imports(source_path, content_hash, session_id, turn_id, imported_at) VALUES (?, ?, ?, ?, ?)",
-        )
-        .run(absolutePath, contentHash, sessionId, turnId, now);
-      this.#database.exec("COMMIT;");
-      return { status: "imported", sessionId, turnId };
-    } catch (error) {
-      this.#database.exec("ROLLBACK;");
-      throw new SemanticTranscriptError("legacy_import_failed", "Legacy answer import failed.", {
-        cause: error,
-      });
     }
   }
 
@@ -599,14 +428,6 @@ export class SemanticTranscriptStore {
 
   readHistory(sourceSessionKey, options = {}) {
     this.#assertOpen();
-    const detail = options.detail ?? "roots";
-    if (detail !== "roots" && detail !== "frontier") {
-      throw new SemanticTranscriptError(
-        "invalid_query",
-        "detail must be roots or frontier for history reads.",
-        { statusCode: 400 },
-      );
-    }
     const beforeSequence = optionalSequence(options.beforeSequence, "beforeSequence");
     const limit = clampLimit(options.limit, 10, 50);
     const session = this.#database
@@ -623,7 +444,7 @@ export class SemanticTranscriptStore {
       turns = this.#database
         .prepare(`SELECT * FROM turns WHERE id IN (${placeholders}) ORDER BY sequence ASC`)
         .all(...ids)
-        .map((row) => mapCompactTurn(row, detail));
+        .map(mapCompactTurn);
     }
     return {
       session: {
@@ -638,7 +459,6 @@ export class SemanticTranscriptStore {
       hasOlder: page.hasOlder,
       oldestSequence: page.oldestSequence,
       latestSequence: page.latestSequence,
-      detail,
     };
   }
 

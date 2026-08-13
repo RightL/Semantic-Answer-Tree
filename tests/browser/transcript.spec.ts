@@ -18,6 +18,7 @@ import {
   uniqueKey,
   visibleTurnAnchor,
   viewerBaseUrl,
+  zoomAnchor,
 } from "./fixtures";
 
 test("temporary Codex sessions are visibly labeled without labeling durable sessions", async ({
@@ -158,7 +159,7 @@ test("prepending an older page preserves the visible scroll anchor", async ({
     .toBeLessThan(4);
 });
 
-test("each session restores its own scroll, selection, and structural expansion", async ({
+test("each session restores its own scroll and selection without carrying an open expansion", async ({
   page,
   request,
 }) => {
@@ -172,43 +173,37 @@ test("each session restores its own scroll, selection, and structural expansion"
   const second = secondTurns.at(-1)!;
 
   await gotoSession(page, first.sessionId, first.turnId);
-  await page.getByTestId(`disclosure-${first.turnId}-0`).click();
+  await zoomAnchor(page, first.turnId, "tradeoff").click();
+  await expect(page.getByTestId(`detail-panel-${first.turnId}`)).toBeVisible();
   await setTranscriptReadingPosition(page, 0.45);
   const firstPosition = await visibleTurnAnchor(page);
 
   await sessionItem(page, second.sessionId).click();
   await expect(turnCard(page, second.turnId)).toHaveAttribute("data-selected", "true");
-  await page.getByTestId(`disclosure-${second.turnId}-1`).click();
+  await expect(page.getByTestId(`detail-panel-${first.turnId}`)).toHaveCount(0);
   await setTranscriptReadingPosition(page, 0.25);
   const secondPosition = await visibleTurnAnchor(page);
 
   await sessionItem(page, first.sessionId).click();
-  await expect(page.getByTestId(`disclosure-${first.turnId}-0`)).toHaveAttribute(
-    "aria-expanded",
-    "true",
-  );
+  await expect(page.getByTestId(`detail-panel-${first.turnId}`)).toHaveCount(0);
   await expect
     .poll(async () => Math.abs((await anchorOffset(page, firstPosition)) - firstPosition.top))
     .toBeLessThan(16);
 
   await sessionItem(page, second.sessionId).click();
-  await expect(page.getByTestId(`disclosure-${second.turnId}-1`)).toHaveAttribute(
-    "aria-expanded",
-    "true",
-  );
   await expect
     .poll(async () => Math.abs((await anchorOffset(page, secondPosition)) - secondPosition.top))
     .toBeLessThan(16);
 });
 
-test("request summaries precede answers and canonical term links stay turn-scoped", async ({
+test("the closed linear body is readable and word, phrase, sentence, and paragraph-end anchors work", async ({
   page,
   request,
 }) => {
-  const sessionKey = uniqueKey("turn terms");
+  const sessionKey = uniqueKey("turn expansions");
   const older = await publishTurn(request, {
     document: semanticAnswer("older vocabulary", {
-      termDefinition: "Definition owned by the older turn.",
+      definitionContent: "Definition owned by the older turn.",
     }),
     requestSummary: "The older request summary",
     sourceSessionKey: sessionKey,
@@ -216,7 +211,7 @@ test("request summaries precede answers and canonical term links stay turn-scope
   });
   const latest = await publishTurn(request, {
     document: semanticAnswer("latest vocabulary", {
-      termDefinition: "Definition owned by the latest turn.",
+      definitionContent: "Definition owned by the latest turn.",
     }),
     requestSummary: "The latest request summary",
     sourceSessionKey: sessionKey,
@@ -224,6 +219,12 @@ test("request summaries precede answers and canonical term links stay turn-scope
   });
 
   await gotoSession(page, latest.sessionId, latest.turnId);
+  const latestCard = turnCard(page, latest.turnId);
+  await expect(latestCard).toContainText("latest vocabulary is a complete answer");
+  await expect(latestCard).toContainText("The closed answer remains readable on its own.");
+  await expect(latestCard).not.toContainText("latest vocabulary phrase-level supporting detail.");
+  await expect(page.getByRole("button", { name: /density|core|annotated|full/i })).toHaveCount(0);
+
   const ordering = await turnCard(page, latest.turnId).evaluate((card, ids) => {
     const summary = card.querySelector(`[data-testid="${ids.summary}"]`)!;
     const answer = card.querySelector(`[data-testid="${ids.answer}"]`)!;
@@ -234,19 +235,49 @@ test("request summaries precede answers and canonical term links stay turn-scope
   });
   expect(ordering).toBe(true);
 
-  await clickTurn(page, older.turnId);
-  await page.getByTestId(`term-${older.turnId}-semantic-answer-tree`).click();
-  await expect(page.getByTestId(`term-popover-${older.turnId}`)).toContainText(
-    "Definition owned by the older turn.",
+  await expect(zoomAnchor(page, latest.turnId, "semantic-answer")).toHaveText("concept");
+  await expect(zoomAnchor(page, latest.turnId, "tradeoff")).toHaveText(
+    "the smallest useful explanation",
   );
-  await page.keyboard.press("Escape");
+  await expect(zoomAnchor(page, latest.turnId, "rationale")).toHaveText(
+    "The closed answer remains readable on its own.",
+  );
+  await expect(zoomAnchor(page, latest.turnId, "more")).toHaveText("More detail");
 
-  await clickTurn(page, latest.turnId);
-  await page.getByTestId(`term-${latest.turnId}-semantic-answer-tree`).click();
-  await expect(page.getByTestId(`term-popover-${latest.turnId}`)).toContainText(
+  await zoomAnchor(page, latest.turnId, "semantic-answer").click();
+  await expect(page.getByTestId(`definition-popover-${latest.turnId}`)).toContainText(
     "Definition owned by the latest turn.",
   );
-  await expect(page.getByTestId(`term-popover-${older.turnId}`)).toHaveCount(0);
+  await page.keyboard.press("Escape");
+  await expect(page.getByTestId(`definition-popover-${latest.turnId}`)).toHaveCount(0);
+  await expect(zoomAnchor(page, latest.turnId, "semantic-answer")).toBeFocused();
+  await zoomAnchor(page, latest.turnId, "semantic-answer").click();
+  await zoomAnchor(page, latest.turnId, "tradeoff").click();
+  await expect(page.getByTestId(`definition-popover-${latest.turnId}`)).toHaveCount(0);
+  await expect(page.getByTestId(`detail-panel-${latest.turnId}`)).toContainText(
+    "latest vocabulary phrase-level supporting detail.",
+  );
+  await expect(page.getByRole("dialog")).toHaveCount(1);
+  await zoomAnchor(page, latest.turnId, "rationale").click();
+  await expect(page.getByTestId(`detail-panel-${latest.turnId}`)).toContainText(
+    "latest vocabulary sentence-level supporting detail.",
+  );
+  await expect(page.getByRole("dialog")).toHaveCount(1);
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await expect(zoomAnchor(page, latest.turnId, "rationale")).toBeFocused();
+
+  await clickTurn(page, older.turnId);
+  await zoomAnchor(page, older.turnId, "semantic-answer").click();
+  await expect(page.getByTestId(`definition-popover-${older.turnId}`)).toContainText(
+    "Definition owned by the older turn.",
+  );
+  await expect(page.getByTestId(`definition-popover-${older.turnId}`)).not.toContainText(
+    "Definition owned by the latest turn.",
+  );
+  await page.getByTestId("viewer-title").click({ position: { x: 1, y: 1 } });
+  await expect(page.getByTestId(`definition-popover-${older.turnId}`)).toHaveCount(0);
+  await expect(zoomAnchor(page, older.turnId, "semantic-answer")).toBeFocused();
 });
 
 test("reload and browser history restore explicit session and turn selection", async ({
@@ -537,31 +568,40 @@ test("a closed mobile session drawer is outside the keyboard tab order", async (
     .toBe(true);
 });
 
-test("copy complete includes referenced terms but excludes unused dictionary entries", async ({
+test("Copy body stays linear while Copy complete includes each referenced expansion once", async ({
   context,
   page,
   request,
 }) => {
-  const document = semanticAnswer("copy glossary", {
-    termDefinition: "Referenced Semantic Answer Tree definition.",
+  const document = semanticAnswer("copy answer", {
+    definitionContent: "Referenced contextual definition.",
   });
-  document.terms!["unused-private-term"] = "UNUSED-GLOSSARY-CANARY";
   const turn = await publishTurn(request, {
     document,
-    sourceSessionKey: uniqueKey("copy glossary"),
-    sourceTurnKey: uniqueKey("copy glossary turn"),
+    sourceSessionKey: uniqueKey("copy answer"),
+    sourceTurnKey: uniqueKey("copy answer turn"),
   });
   await context.grantPermissions(["clipboard-read", "clipboard-write"], {
     origin: viewerBaseUrl(),
   });
   await gotoSession(page, turn.sessionId, turn.turnId);
+
+  await page.getByTestId("copy-body").click();
+  const bodyClipboard = await page.evaluate(() => navigator.clipboard.readText());
+  expect(bodyClipboard).toContain(document.title);
+  expect(bodyClipboard).toContain("concept");
+  expect(bodyClipboard).not.toContain("zoom:");
+  expect(bodyClipboard).not.toContain("Referenced contextual definition.");
+
   await page.getByTestId("copy-complete").click();
-  const clipboard = await page.evaluate(() => navigator.clipboard.readText());
-  expect(clipboard).toContain("Referenced Semantic Answer Tree definition.");
-  expect(clipboard).not.toContain("UNUSED-GLOSSARY-CANARY");
+  const completeClipboard = await page.evaluate(() => navigator.clipboard.readText());
+  for (const expansion of Object.values(document.expansions!)) {
+    expect(completeClipboard.split(expansion.content)).toHaveLength(2);
+  }
+  expect(completeClipboard).not.toContain("zoom:");
 });
 
-test("selected-turn structural, lexical, and copy controls make no content request", async ({
+test("zoom and copy controls use only the published turn and make no model or content request", async ({
   context,
   page,
   request,
@@ -590,12 +630,12 @@ test("selected-turn structural, lexical, and copy controls make no content reque
     }
   });
 
-  await page.getByTestId(`disclosure-${selected.turnId}-0`).click();
-  await page.getByTestId("expand-all").click();
-  await expect(page.getByTestId(`node-${selected.turnId}-0-0-0`)).toBeVisible();
-  await page.getByTestId(`term-${selected.turnId}-semantic-answer-tree`).click();
-  await expect(page.getByTestId(`term-popover-${selected.turnId}`)).toBeVisible();
+  await zoomAnchor(page, selected.turnId, "tradeoff").click();
+  await expect(page.getByTestId(`detail-panel-${selected.turnId}`)).toBeVisible();
+  await zoomAnchor(page, selected.turnId, "semantic-answer").click();
+  await expect(page.getByTestId(`definition-popover-${selected.turnId}`)).toBeVisible();
   await page.keyboard.press("Escape");
+  await page.getByTestId("copy-body").click();
   await page.getByTestId("copy-complete").click();
   await expect
     .poll(() => page.evaluate(() => navigator.clipboard.readText()))
@@ -603,9 +643,68 @@ test("selected-turn structural, lexical, and copy controls make no content reque
   expect(await page.evaluate(() => navigator.clipboard.readText())).not.toContain(
     latest.document.title,
   );
-  await page.getByTestId("collapse-all").click();
   await page.waitForTimeout(150);
   expect(interactionRequests).toEqual([]);
+});
+
+test("desktop details use a fixed right rail without moving the main reading position or width", async ({
+  page,
+  request,
+}) => {
+  await page.setViewportSize({ height: 900, width: 1280 });
+  const turns = await publishMany(request, uniqueKey("fixed detail rail"), 24, {
+    label: "fixed rail",
+  });
+  const selected = turns.at(-1)!;
+  await gotoSession(page, selected.sessionId, selected.turnId);
+  await setTranscriptReadingPosition(page, 0.4);
+  const trigger = zoomAnchor(page, selected.turnId, "more");
+  await trigger.scrollIntoViewIfNeeded();
+  await page.waitForTimeout(100);
+  const before = await scrollMetrics(page);
+  const widthBefore = await page.evaluate(() => ({
+    client: document.documentElement.clientWidth,
+    scroll: document.documentElement.scrollWidth,
+  }));
+  await trigger.click();
+  const panel = page.getByTestId(`detail-panel-${selected.turnId}`);
+  await expect(panel).toBeVisible();
+  const panelBox = await panel.boundingBox();
+  expect(panelBox).not.toBeNull();
+  expect(panelBox!.x).toBeGreaterThan(1280 / 2);
+  await expect
+    .poll(async () => Math.abs((await scrollMetrics(page)).scrollTop - before.scrollTop))
+    .toBeLessThan(4);
+  expect(await page.evaluate(() => ({
+    client: document.documentElement.clientWidth,
+    scroll: document.documentElement.scrollWidth,
+  }))).toEqual(widthBefore);
+
+  await page.getByTestId("viewer-title").click({ position: { x: 1, y: 1 } });
+  await expect(panel).toHaveCount(0);
+  await expect(trigger).toBeFocused();
+});
+
+test("mobile details use a bottom sheet and close with Escape", async ({ page, request }) => {
+  await page.setViewportSize({ height: 760, width: 390 });
+  const turn = await publishTurn(request, {
+    sourceSessionKey: uniqueKey("mobile details"),
+    sourceTurnKey: uniqueKey("mobile details turn"),
+  });
+  await gotoSession(page, turn.sessionId, turn.turnId);
+  const trigger = zoomAnchor(page, turn.turnId, "tradeoff");
+  await trigger.click();
+  const sheet = page.getByTestId(`detail-panel-${turn.turnId}`);
+  await expect(sheet).toBeVisible();
+  const box = await sheet.boundingBox();
+  expect(box).not.toBeNull();
+  expect(box!.y).toBeGreaterThan(760 / 2);
+  expect(Math.abs(box!.y + box!.height - 760)).toBeLessThan(32);
+  expect(box!.width).toBeGreaterThan(340);
+
+  await page.keyboard.press("Escape");
+  await expect(sheet).toHaveCount(0);
+  await expect(trigger).toBeFocused();
 });
 
 test("remote Markdown images are represented without making a remote request", async ({

@@ -14,31 +14,41 @@ export const HISTORY_TOOL_NAME = "read_semantic_history";
 export const TURN_TOOL_NAME = "read_semantic_turn";
 
 export const MCP_SERVER_INSTRUCTIONS =
-  "Publish one complete SemanticAnswer v1 tree per final answer. The integration owns identity, idempotency, acknowledgement checks, and ambiguous-delivery recovery. A side chat may receive an isolated temporary session; never reuse the main task identity. Correct validation once at most. On confirmed success, reply exactly: Rendered in Semantic Answer Tree. If success is unconfirmed, give the complete ordinary answer instead—never both. History is read-only and compact by default.";
+  "Publish one complete SemanticAnswer v1 per final answer: a concise linear Markdown body with optional sparse expansions anchored by [text](zoom:id) links in the body outside code. Every zoom reference must resolve, every expansion must be referenced, and expansion content must not contain zoom references. The integration owns identity, idempotency, acknowledgement checks, and ambiguous-delivery recovery. A side chat may receive an isolated temporary session; never reuse the main task identity. Correct validation once at most. On confirmed success, reply exactly: Rendered in Semantic Answer. If success is unconfirmed, give the complete ordinary answer instead—never both. History is read-only and omits expansions.";
 
 const SEMANTIC_ANSWER_SCHEMA = {
   type: "object",
   properties: {
     version: { const: 1 },
-    title: { type: "string" },
-    root: { $ref: "#/$defs/semanticNode" },
-    terms: {
+    title: { type: "string", minLength: 1 },
+    body: {
+      type: "string",
+      minLength: 1,
+      description: "The complete concise answer in linear Markdown, with optional zoom: links.",
+    },
+    expansions: {
       type: "object",
       propertyNames: { pattern: "^[a-z0-9._-]+$", maxLength: 128 },
-      additionalProperties: { type: "string" },
+      additionalProperties: { $ref: "#/$defs/semanticExpansion" },
+      maxProperties: 500,
     },
   },
-  required: ["version", "title", "root"],
+  required: ["version", "title", "body"],
   additionalProperties: false,
 };
 
-const SEMANTIC_NODE_SCHEMA = {
+const SEMANTIC_EXPANSION_SCHEMA = {
   type: "object",
   properties: {
-    content: { type: "string", minLength: 1 },
-    children: { type: "array", items: { $ref: "#/$defs/semanticNode" } },
+    kind: { type: "string", enum: ["definition", "detail"] },
+    title: { type: "string" },
+    content: {
+      type: "string",
+      minLength: 1,
+      description: "Markdown expansion content. zoom: links are not allowed here.",
+    },
   },
-  required: ["content"],
+  required: ["kind", "content"],
   additionalProperties: false,
 };
 
@@ -55,7 +65,7 @@ export const PUBLISH_TOOL_INPUT_SCHEMA = Object.freeze({
   additionalProperties: false,
   $defs: {
     semanticAnswer: SEMANTIC_ANSWER_SCHEMA,
-    semanticNode: SEMANTIC_NODE_SCHEMA,
+    semanticExpansion: SEMANTIC_EXPANSION_SCHEMA,
   },
 });
 
@@ -65,7 +75,6 @@ export const HISTORY_TOOL_INPUT_SCHEMA = Object.freeze({
     sourceSessionKey: { type: "string", minLength: 1, maxLength: 1024 },
     beforeSequence: { type: "integer", minimum: 1 },
     limit: { type: "integer", minimum: 1, maximum: 50 },
-    detail: { type: "string", enum: ["roots", "frontier"] },
   },
   additionalProperties: false,
 });
@@ -101,7 +110,7 @@ export async function runMcpServer(options = {}) {
   const identityProvider =
     options.identityProvider ?? new SessionIdentityProvider({ environment: options.environment });
   const server = new Server(
-    { name: "semantic-answer-tree", version: "2.0.0" },
+    { name: "semantic-answer", version: "2.0.0" },
     { capabilities: { tools: {} }, instructions: MCP_SERVER_INSTRUCTIONS },
   );
 
@@ -115,12 +124,13 @@ export async function runMcpServer(options = {}) {
       },
       {
         name: HISTORY_TOOL_NAME,
-        description: "Read compact root or frontier history for the caller's session.",
+        description:
+          "Read compact Semantic Answer history for the caller's session. Each answer contains only version, title, and body; use read_semantic_turn for expansions.",
         inputSchema: HISTORY_TOOL_INPUT_SCHEMA,
       },
       {
         name: TURN_TOOL_NAME,
-        description: "Read one complete immutable semantic turn by answer-tree turn ID.",
+        description: "Read one complete immutable Semantic Answer turn by turn ID.",
         inputSchema: TURN_TOOL_INPUT_SCHEMA,
       },
     ],

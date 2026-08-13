@@ -48,7 +48,7 @@ test("SessionIdentityProvider prefers injected identity, falls back only to expl
 
 test("Codex hook namespaces and overwrites publication identity deterministically", () => {
   const input = {
-    tool_name: "mcp__semantic_answer_tree__publish_semantic_answer",
+    tool_name: "mcp__semantic_answer__publish_semantic_answer",
     session_id: "thread-123",
     turn_id: "turn-456",
     tool_input: {
@@ -77,7 +77,7 @@ test("Codex hook namespaces and overwrites publication identity deterministicall
 
 test("Codex hook injects history identity and is an empty-output no-op for other tools", () => {
   const history = transformCodexPreToolUse({
-    tool_name: "mcp__semantic_answer_tree__read_semantic_history",
+    tool_name: "mcp__semantic_answer__read_semantic_history",
     session_id: "thread-history",
     turn_id: "turn-history",
     tool_input: { limit: 3, sourceSessionKey: "wrong" },
@@ -100,7 +100,7 @@ test("Codex hook injects history identity and is an empty-output no-op for other
 test("Codex identity stays stable on retry and separates another conversation and fork", () => {
   const call = (sessionId, turnId) =>
     transformCodexPreToolUse({
-      tool_name: "mcp__semantic_answer_tree__publish_semantic_answer",
+      tool_name: "mcp__semantic_answer__publish_semantic_answer",
       session_id: sessionId,
       turn_id: turnId,
       tool_input: publication(),
@@ -119,7 +119,7 @@ test("Codex identity stays stable on retry and separates another conversation an
 
 test("Codex hook derives stable temporary identity for a side chat without a session id", () => {
   const input = {
-    tool_name: "mcp__semantic_answer_tree__publish_semantic_answer",
+    tool_name: "mcp__semantic_answer__publish_semantic_answer",
     turn_id: "side-chat-turn-1",
     tool_use_id: "side-chat-tool-1",
     tool_input: {
@@ -135,7 +135,7 @@ test("Codex hook derives stable temporary identity for a side chat without a ses
 
   assert.deepEqual(retry, first);
   const sessionDigest = createHash("sha256")
-    .update("semantic-answer-tree:temporary-session:v1:side-chat-turn-1")
+    .update("semantic-answer:temporary-session:v1:side-chat-turn-1")
     .digest("hex");
   assert.equal(first.sourceSessionKey, `${TEMPORARY_CODEX_SESSION_PREFIX}${sessionDigest}`);
   assert.equal(first.sourceTurnKey, "side-chat-turn-1");
@@ -150,7 +150,7 @@ test("Codex hook derives stable temporary identity for a side chat without a ses
   assert.notEqual(first.idempotencyKey, input.tool_input.idempotencyKey);
 
   const history = transformCodexPreToolUse({
-    tool_name: "mcp__semantic_answer_tree__read_semantic_history",
+    tool_name: "mcp__semantic_answer__read_semantic_history",
     turn_id: "side-chat-turn-1",
     tool_use_id: "side-chat-history-tool",
     tool_input: { limit: 3, sourceSessionKey: "model-guessed-session" },
@@ -164,7 +164,7 @@ test("Codex hook derives stable temporary identity for a side chat without a ses
 test("Codex temporary identity spans tool uses, separates side chats, and preserves durable identity", () => {
   const temporary = (turnId, toolUseId) =>
     transformCodexPreToolUse({
-      tool_name: "mcp__semantic_answer_tree__publish_semantic_answer",
+      tool_name: "mcp__semantic_answer__publish_semantic_answer",
       turn_id: turnId,
       tool_use_id: toolUseId,
       tool_input: publication(),
@@ -180,7 +180,7 @@ test("Codex temporary identity spans tool uses, separates side chats, and preser
 
   const durable = (toolUseId) =>
     transformCodexPreToolUse({
-      tool_name: "mcp__semantic_answer_tree__publish_semantic_answer",
+      tool_name: "mcp__semantic_answer__publish_semantic_answer",
       session_id: "thread-durable",
       turn_id: "turn-durable",
       tool_use_id: toolUseId,
@@ -200,7 +200,7 @@ test("Codex temporary identity spans tool uses, separates side chats, and preser
 
 test("Codex hook treats whitespace identity as absent and never derives from tool-use identity", () => {
   const temporary = transformCodexPreToolUse({
-    tool_name: "mcp__semantic_answer_tree__publish_semantic_answer",
+    tool_name: "mcp__semantic_answer__publish_semantic_answer",
     session_id: "   ",
     turn_id: "side-chat-turn",
     tool_use_id: "tool-use-must-not-be-identity",
@@ -214,7 +214,7 @@ test("Codex hook treats whitespace identity as absent and never derives from too
     idempotencyKey: "manual-idempotency",
   });
   const noTurn = transformCodexPreToolUse({
-    tool_name: "mcp__semantic_answer_tree__publish_semantic_answer",
+    tool_name: "mcp__semantic_answer__publish_semantic_answer",
     session_id: "durable-session",
     turn_id: " \t ",
     tool_use_id: "tool-use-must-not-be-identity",
@@ -246,7 +246,7 @@ test("MCP publication rejects missing hook idempotency before transport and neve
 
 test("final-surface policy returns exactly one surface", () => {
   assert.equal(finalResponseForPublication(true, "ordinary answer"), VIEWER_SUCCESS_FINAL);
-  assert.equal(VIEWER_SUCCESS_FINAL, "Rendered in Semantic Answer Tree.");
+  assert.equal(VIEWER_SUCCESS_FINAL, "Rendered in Semantic Answer.");
   assert.equal(finalResponseForPublication(false, "ordinary answer"), "ordinary answer");
   assert.throws(() => finalResponseForPublication(false, " "), /fallback/i);
 });

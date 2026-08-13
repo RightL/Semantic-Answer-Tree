@@ -14,9 +14,9 @@ test("hosted CSP blocks script attributes while hydrated interactions remain fun
   expect(csp).toContain("object-src 'none'");
   expect(csp).toContain("frame-ancestors 'none'");
 
-  await expect(page.getByTestId("turn-demo-reader-003")).toBeVisible();
-  await page.getByTestId("disclosure-demo-reader-003-0").click();
-  await expect(page.getByTestId("node-demo-reader-003-0-0")).toBeVisible();
-  await page.getByTestId("term-demo-reader-003-semantic-answer-tree").click();
-  await expect(page.getByTestId("term-popover-demo-reader-003")).toBeVisible();
+  await expect(page.getByTestId("turn-demo-placement-003")).toBeVisible();
+  await page.getByTestId("zoom-anchor-demo-placement-003-placement-contract").click();
+  await expect(page.getByTestId("detail-panel-demo-placement-003")).toBeVisible();
+  await page.getByTestId("zoom-anchor-demo-placement-003-placement-revision").click();
+  await expect(page.getByTestId("definition-popover-demo-placement-003")).toBeVisible();
 });

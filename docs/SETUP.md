@@ -1,59 +1,56 @@
-# Semantic Answer Tree Setup Guide
+# Semantic Answer Setup Guide
 
-*Explore every answer, branch by branch*
+*Read the answer. Open only the detail you need.*
 
-Ordinary AI answers tend to be too short or too long, forcing repeated "explain this," "longer," and "shorter" requests. Semantic Answer Tree publishes one structured answer whose branches and terms can be expanded independently without another model call.
+AI answers are often too short or too long, and repeated “explain,” “longer,” and “shorter” turns are an awkward way to control detail. Semantic Answer publishes a concise, complete Markdown answer with optional explanation attached exactly where a reader may want it.
 
-The default installation is local-first. It stores every successful publication as an immutable turn and groups turns into transcripts by stable source session. The public answer still uses the `SemanticAnswer` schema v1. Session identity, turn identity, request summaries, idempotency, and authentication exist only in the surrounding publication protocol.
+The default installation is local-first. Every successful publication becomes an immutable turn in a local transcript. Sessions, source identity, request summaries, idempotency, and authentication belong to the publication protocol; they are not fields in the `SemanticAnswer` v1 document.
 
-## 1. Installation and Startup
+## 1. Install and start
 
 Requirements:
 
 - Node.js `>=22.13.0`.
-- Codex CLI, used to register the local stdio MCP server.
-- Chromium for browser tests. Before the first browser-test run, install it with `npx playwright install chromium`.
-
-Install dependencies from the project root:
+- Codex CLI for registering the local MCP adapter.
+- Chromium for browser tests. Before the first browser-test run, use `npx playwright install chromium`.
 
 ### Windows
 
+From the project root:
+
 ```powershell
 npm ci
-```
-
-Start the local transcript service in the first terminal:
-
-```powershell
 npm run local
 ```
 
-The service listens on `http://127.0.0.1:4318` by default. On its first start, it creates the SQLite database, applies migrations, and creates a capability-token file unless a token was provided directly.
+The API listens on `http://127.0.0.1:4318`. On first start it creates the SQLite database, applies database migrations, and creates a capability-token file unless a token was supplied directly.
+
+Check it from another terminal:
 
 ```powershell
 Invoke-RestMethod http://127.0.0.1:4318/health
 ```
 
-Start the dedicated viewer in the second terminal:
+Start the viewer in that second terminal:
 
 ```powershell
 npm run dev
 ```
 
-Open [http://localhost:4173](http://localhost:4173). The viewer shows the session list and immutable turns. A new `turn-published` event carries IDs only; the page then reads the committed turn.
+Open [http://localhost:4173](http://localhost:4173). The viewer lists sessions and immutable turns. A committed `turn-published` event contains identifiers only; the viewer then reads the turn.
 
 ### Linux
 
-From the project root, verify the Node.js version and install the locked dependencies:
+From the project root:
 
 ```bash
 node --version
 npm ci
 ```
 
-Node.js must be `>=22.13.0`. Do not continue with the older Node.js version shipped by some Linux distributions; install a current user-scoped Node.js release first.
+Do not continue with an older distribution-provided Node.js release. Install a current user-scoped Node.js release first if needed.
 
-For ordinary use on the Linux machine, start the transcript service and viewer in separate terminals:
+Run the API and viewer in separate terminals:
 
 ```bash
 # Terminal 1
@@ -65,13 +62,13 @@ npm run local
 npm run dev
 ```
 
-Both processes are loopback-only. Open `http://localhost:4173` on that Linux machine.
+Both processes bind to loopback. Open `http://localhost:4173` on that Linux machine.
 
-#### View a Linux server from Windows through SSH
+### View `10.21.1.228` privately from Windows
 
-Keep the Linux server's ports private and forward them through SSH. This example assumes the server viewer and API use their default ports. It uses Windows ports `4174` and `4319`, so a separate Windows installation can keep using `4173` and `4318`.
+Keep the Linux listeners private and forward both through SSH. The following layout lets a Windows installation remain on ports `4173` and `4318` while the server appears on Windows ports `4174` and `4319`.
 
-On the Linux server, build the viewer specifically for the Windows-side API tunnel port before starting it:
+On `lzt@10.21.1.228`, build the viewer for the Windows-side API port:
 
 ```bash
 export PROJECT_ROOT="$(pwd -P)"
@@ -82,7 +79,7 @@ export NEXT_PUBLIC_SEMANTIC_ANSWER_API="http://127.0.0.1:4319"
 npm run build
 ```
 
-Then start the API and production viewer in separate Linux terminals with the same absolute runtime paths and allowed origins:
+Start the API and production viewer on the server:
 
 ```bash
 # Linux terminal 1
@@ -98,37 +95,39 @@ npm run local
 npm run start
 ```
 
-On Windows, keep this PowerShell command running:
+Keep this PowerShell command running on Windows:
 
 ```powershell
-ssh -N `
+ssh -N -T `
+  -o ExitOnForwardFailure=yes `
+  -o ServerAliveInterval=30 `
+  -o ServerAliveCountMax=3 `
   -L 4174:127.0.0.1:4173 `
   -L 4319:127.0.0.1:4318 `
-  user@linux-server
+  lzt@10.21.1.228
 ```
 
-Replace `user@linux-server` with your SSH login and host. Open [http://localhost:4174](http://localhost:4174) on Windows. The page uses `http://127.0.0.1:4319` for API requests, and both connections travel through SSH to loopback listeners on the server. If either Windows-side port changes, update the build-time `NEXT_PUBLIC_SEMANTIC_ANSWER_API`, rebuild, and update `SEMANTIC_ANSWER_VIEWER_ORIGINS` before restarting the service.
+Open [http://localhost:4174](http://localhost:4174) on Windows. The browser calls `http://127.0.0.1:4319`; both connections pass through SSH to server loopback listeners. If either Windows-side port changes, update `NEXT_PUBLIC_SEMANTIC_ANSWER_API`, rebuild the viewer, update `SEMANTIC_ANSWER_VIEWER_ORIGINS`, and restart the services.
 
-Never expose server port `4318` to the LAN or internet. It is intentionally loopback-only, and several transcript-reading routes do not use the capability token. Do not open server port `4173` either; use the SSH tunnel for both ports.
+Never expose server port `4318` or `4173` to the LAN or internet. Several transcript-reading routes intentionally do not require the capability token because the service is designed for a single user's loopback environment.
 
-## 2. Runtime Paths, Tokens, and Environment Variables
+## 2. Runtime paths, tokens, and environment variables
 
-The defaults work when commands run from the project root. For regular local use, resolve both the database and token-file paths to absolute paths, and point the HTTP service and MCP adapter at the same token file.
+The defaults work from the project root. For regular use, prefer absolute database and token paths and point the HTTP service and MCP adapter at the same token file.
 
 | Environment variable | Default | Consumer and purpose |
 | --- | --- | --- |
 | `SEMANTIC_ANSWER_DB` | `.semantic-answer/semantic-transcript.sqlite3` | SQLite database used by the HTTP service. The MCP adapter also uses it to derive the default token-file path. |
-| `SEMANTIC_ANSWER_LEGACY_FILE` | Not set | HTTP service. Only when explicitly set does the service attempt a one-time import of the specified legacy schema-v1 file. |
 | `SEMANTIC_ANSWER_TOKEN` | Not set | HTTP service or MCP adapter. Supplies the capability token directly and takes precedence over the token file. |
-| `SEMANTIC_ANSWER_TOKEN_FILE` | `capability-token` in the database directory | HTTP service or MCP adapter. Provides their shared token. |
+| `SEMANTIC_ANSWER_TOKEN_FILE` | `capability-token` beside the database | HTTP service or MCP adapter. Provides their shared token. |
 | `SEMANTIC_ANSWER_SERVICE_URL` | `http://127.0.0.1:4318` | MCP adapter. Must be a loopback HTTP origin with no path, query, or credentials. |
 | `SEMANTIC_ANSWER_PORT` | `4318` | HTTP service listening port. |
-| `NEXT_PUBLIC_SEMANTIC_ANSWER_API` | `http://127.0.0.1:4318` | Origin from which the viewer reads sessions, turns, and SSE. Set it before startup or build. |
-| `SEMANTIC_ANSWER_SESSION_KEY` | Not set | Explicit MCP binding for one conversation, used only when a hook or wrapper is unavailable. |
-| `SEMANTIC_ANSWER_TURN_KEY` | Not set | Optional turn binding for a dedicated wrapper. It must differ for every logical turn and must not be reused statically. |
+| `NEXT_PUBLIC_SEMANTIC_ANSWER_API` | `http://127.0.0.1:4318` | Origin from which the viewer reads sessions, turns, and events. Set before development startup or production build. |
+| `SEMANTIC_ANSWER_SESSION_KEY` | Not set | Manual MCP binding for one conversation when no hook or wrapper is available. |
+| `SEMANTIC_ANSWER_TURN_KEY` | Not set | Optional turn binding for a dedicated wrapper. It must change for every logical turn. |
 | `SEMANTIC_ANSWER_VIEWER_ORIGINS` | `http://localhost:4173,http://127.0.0.1:4173` | Exact viewer origins allowed by the HTTP service, separated by commas. |
 
-Relative paths are resolved against the current working directory of the process being started. The following PowerShell sets environment variables only for the current terminal and does not write user configuration:
+Relative paths resolve against the process working directory. This PowerShell example sets values only for the current terminal:
 
 ```powershell
 $projectRoot = (Get-Location).Path
@@ -138,11 +137,9 @@ $env:SEMANTIC_ANSWER_TOKEN_FILE = Join-Path $runtimeRoot "capability-token"
 npm run local
 ```
 
-Default startup does not read any legacy file. Only when migrating an older installation should you set `SEMANTIC_ANSWER_LEGACY_FILE` to the old schema-v1 file before starting the service. Never copy a real legacy file into `public/`.
+After trimming, `SEMANTIC_ANSWER_TOKEN` must contain at least 32 characters and no whitespace. Never pass it through a `NEXT_PUBLIC_*` variable or put it in an answer, request summary, log, or Git. The token file uses mode `0600` where POSIX modes are supported. Windows does not guarantee POSIX permission bits, so keep the runtime directory in a private user workspace.
 
-After trimming, `SEMANTIC_ANSWER_TOKEN` must contain at least 32 characters. A valid Bearer token cannot contain whitespace. Never pass a token through a `NEXT_PUBLIC_*` variable, and never put it in an answer, request summary, log, or Git. The token file uses mode `0600` on systems that support POSIX modes. Windows does not guarantee that POSIX permission bits are exposed, so keep the runtime directory in a private user workspace.
-
-When using a custom port, keep both terminals consistent:
+For a custom API port, keep every consumer consistent:
 
 ```powershell
 # HTTP service terminal
@@ -156,28 +153,13 @@ $env:NEXT_PUBLIC_SEMANTIC_ANSWER_API = "http://127.0.0.1:4319"
 npm run dev
 ```
 
-The registered MCP adapter must also set `SEMANTIC_ANSWER_SERVICE_URL` to `http://127.0.0.1:4319`; then restart Codex. The `$serviceUrl` value in the registration command in section 3 is this independent setting. To run the adapter manually, set it in that terminal:
+The MCP adapter must use `SEMANTIC_ANSWER_SERVICE_URL=http://127.0.0.1:4319`. If the viewer origin changes, add its complete origin to `SEMANTIC_ANSWER_VIEWER_ORIGINS`; wildcards are not accepted.
 
-```powershell
-$env:SEMANTIC_ANSWER_SERVICE_URL = "http://127.0.0.1:4319"
-npm run mcp
-```
+## 3. Register the MCP adapter
 
-If the viewer origin also changes, add the new origin to `SEMANTIC_ANSWER_VIEWER_ORIGINS`. This variable accepts only complete, exact loopback HTTP or HTTPS origins; it does not accept wildcards.
+`server/mcp-server.mjs` calls the loopback HTTP service and never opens SQLite directly. Run `npm run local` once so the default token file exists.
 
-## 3. Register the Thin MCP Adapter
-
-`server/mcp-server.mjs` does not open SQLite directly. It calls the single HTTP service through `SEMANTIC_ANSWER_SERVICE_URL` and the capability token.
-
-Run `npm run local` once so that the default token file exists.
-
-If `semantic-answer-viewer` is already registered, remove it once before adding the new registration:
-
-```powershell
-codex mcp remove semantic-answer-viewer
-```
-
-Then resolve absolute paths and register the adapter from the project root. On Windows PowerShell:
+On Windows PowerShell:
 
 ```powershell
 $nodePath = (Get-Command node).Source
@@ -185,7 +167,7 @@ $mcpPath = (Resolve-Path .\server\mcp-server.mjs).Path
 $serviceUrl = "http://127.0.0.1:4318"
 $tokenFile = Join-Path (Get-Location).Path ".semantic-answer\capability-token"
 
-codex mcp add semantic-answer-tree `
+codex mcp add semantic-answer `
   --env "SEMANTIC_ANSWER_SERVICE_URL=$serviceUrl" `
   --env "SEMANTIC_ANSWER_TOKEN_FILE=$tokenFile" `
   -- $nodePath $mcpPath
@@ -201,7 +183,7 @@ NODE_PATH="$(command -v node)"
 MCP_PATH="$(realpath server/mcp-server.mjs)"
 TOKEN_FILE="$PROJECT_ROOT/.semantic-answer/capability-token"
 
-codex mcp add semantic-answer-tree \
+codex mcp add semantic-answer \
   --env "SEMANTIC_ANSWER_SERVICE_URL=http://127.0.0.1:4318" \
   --env "SEMANTIC_ANSWER_TOKEN_FILE=$TOKEN_FILE" \
   -- "$NODE_PATH" "$MCP_PATH"
@@ -209,39 +191,33 @@ codex mcp add semantic-answer-tree \
 codex mcp list
 ```
 
-If Linux still has the old registration, run `codex mcp remove semantic-answer-viewer` once before the `add` command. The MCP adapter and Codex run on the server and reach its loopback API directly; the Windows-side `4319` tunnel port is only for the Windows browser.
+On `10.21.1.228`, Codex and its MCP adapter call the server's own `http://127.0.0.1:4318`; the Windows-side port `4319` is only for the tunneled browser.
 
-The registration name is mutable. Because it is part of each fully qualified MCP tool name, this one-time rename also requires changing the hook matcher to the pattern in section 4 and reviewing and trusting the updated hook again.
+Restart Codex, then use `/mcp` to check `semantic-answer`. Codex CLI, the desktop application, and the IDE extension share MCP configuration when they run on the same Codex host. See the [Codex MCP documentation](https://learn.chatgpt.com/docs/extend/mcp?surface=cli).
 
-Restart Codex, then use `/mcp` to check `semantic-answer-tree`. Codex CLI, the desktop application, and the IDE extension share MCP configuration when they run on the same Codex host. See the [Codex MCP documentation](https://learn.chatgpt.com/docs/extend/mcp?surface=cli) for the official configuration reference.
-
-The MCP server exposes three tools:
+The adapter exposes three tools:
 
 | Tool | Purpose |
 | --- | --- |
-| `publish_semantic_answer` | Validates and appends one turn. On success, it returns `{ ok: true, sessionId, turnId, sequence }`, not the answer. |
-| `read_semantic_history` | Reads compact `roots` or `frontier` history for the current source session. |
+| `publish_semantic_answer` | Validates and appends one turn. Success returns `{ ok: true, sessionId, turnId, sequence }`, not the answer. |
+| `read_semantic_history` | Reads compact `{ version, title, body }` previews for the current source session. |
 | `read_semantic_turn` | Reads one complete immutable turn by `turnId`. |
 
-Call `read_semantic_history` first with a small limit and compact detail. Call `read_semantic_turn` at most once, and only when the compact information is insufficient. Do not automatically read a large history or multiple full turns.
+Read a small history page first. Read at most one complete prior turn, and only when its expansion content is needed. Do not automatically load large history windows or multiple complete turns.
 
-In compact history, each root node contains only `content`, `childCount`, and, in `frontier` mode, an optional single level of `children`. `answer.terms` contains definitions only for terms referenced by the returned nodes. Compact history does not return the full tree and does not replace definitions with term IDs.
+## 4. Configure the Codex session hook
 
-## 4. Configure the Codex Session Hook
+A standard-input/output MCP configuration does not establish that one process equals one Codex conversation. The included `integration/codex-session-hook.mjs` binds publish and history calls to the current Codex session and turn. The repository does not install `hooks.json`; review and merge the configuration yourself.
 
-A normal stdio MCP configuration records command, arguments, environment, and current working directory, but the official documentation does not say that it automatically forwards the current Codex thread ID into tool arguments. Therefore, one MCP process must not be assumed to represent one conversation.
-
-The preferred solution is the included `integration/codex-session-hook.mjs`. The repository neither includes nor automatically installs a user-level `hooks.json`; users must manually review and merge the configuration.
-
-Use this exact hook matcher:
+Use this exact matcher:
 
 ```text
-^mcp__semantic_answer_tree__(publish_semantic_answer|read_semantic_history)$
+^mcp__semantic_answer__(publish_semantic_answer|read_semantic_history)$
 ```
 
-The MCP registration remains `semantic-answer-tree`. Codex normalizes its hyphens to underscores in the fully qualified hook `tool_name`, so the matcher must use `semantic_answer_tree` exactly as shown.
+The registration is `semantic-answer`. Codex changes its hyphen to an underscore in the qualified hook `tool_name`.
 
-During `PreToolUse`, the hook reads the Codex common `session_id`, the turn-scoped `turn_id`, and the MCP `tool_input`. It then injects the following values through `updatedInput`, overriding fields with the same names supplied by the model:
+For a normal task, `PreToolUse` injects:
 
 ```text
 sourceSessionKey = "codex:" + session_id
@@ -249,19 +225,11 @@ sourceTurnKey    = turn_id
 idempotencyKey  = SHA-256("codex:" + session_id + ":" + turn_id)
 ```
 
-Some one-off side chats provide a `turn_id` but no stable `session_id`. The hook handles them instead of disabling publication:
+Some one-off side chats provide `turn_id` without a stable `session_id`. The hook derives an isolated, hashed key in the `codex-temporary:v1:` namespace from that turn. Retries remain stable, and the side chat never borrows or merges into the main task's transcript. The viewer exposes only `temporary: true` and a `Temporary` badge, never the source key. Temporary describes isolated identity; the immutable turn remains in local history.
 
-```text
-sourceSessionKey = "codex-temporary:v1:" + SHA-256("semantic-answer-tree:temporary-session:v1:" + turn_id)
-sourceTurnKey    = turn_id
-idempotencyKey  = SHA-256(sourceSessionKey + ":" + turn_id)
-```
+The hook reads only hook standard input and hashes identifiers. It does not read transcripts, files, or the network.
 
-This creates a separate, turn-scoped transcript that the viewer labels `Temporary`. It never copies or guesses the main task's identity. The row remains in the same append-only local database; `Temporary` describes its isolated identity scope, not automatic deletion.
-
-The hook does not read transcripts, files, or the network. It reads only hook standard input and hashes IDs. First obtain absolute command paths, then print mergeable JSON. These commands do not write to the user home directory.
-
-On Windows PowerShell:
+Generate mergeable JSON on Windows:
 
 ```powershell
 $nodePath = (Get-Command node).Source
@@ -269,11 +237,11 @@ $hookPath = (Resolve-Path .\integration\codex-session-hook.mjs).Path
 $hookCommand = '"{0}" "{1}"' -f $nodePath, $hookPath
 
 $hookConfig = [ordered]@{
-  description = "Bind Semantic Answer Tree calls to the current Codex session and turn."
+  description = "Bind Semantic Answer calls to the current Codex session and turn."
   hooks = [ordered]@{
     PreToolUse = @(
       [ordered]@{
-        matcher = "^mcp__semantic_answer_tree__(publish_semantic_answer|read_semantic_history)$"
+        matcher = "^mcp__semantic_answer__(publish_semantic_answer|read_semantic_history)$"
         hooks = @(
           [ordered]@{
             type = "command"
@@ -290,7 +258,7 @@ $hookConfig = [ordered]@{
 $hookConfig | ConvertTo-Json -Depth 10
 ```
 
-On Linux Bash:
+Generate it on Linux:
 
 ```bash
 NODE_PATH="$(command -v node)"
@@ -300,11 +268,11 @@ export HOOK_COMMAND
 
 "$NODE_PATH" <<'NODE'
 const config = {
-  description: "Bind Semantic Answer Tree calls to the current Codex session and turn.",
+  description: "Bind Semantic Answer calls to the current Codex session and turn.",
   hooks: {
     PreToolUse: [
       {
-        matcher: "^mcp__semantic_answer_tree__(publish_semantic_answer|read_semantic_history)$",
+        matcher: "^mcp__semantic_answer__(publish_semantic_answer|read_semantic_history)$",
         hooks: [
           {
             type: "command",
@@ -321,72 +289,64 @@ console.log(JSON.stringify(config, null, 2));
 NODE
 ```
 
-Merge the output into the user-level `~/.codex/hooks.json` or the `.codex/hooks.json` of a trusted project. The command must retain absolute paths for both Node and the script because the hook runs from the session's current working directory. Register the MCP server with the exact name `semantic-answer-tree`; Codex exposes that registration to hooks as the normalized `semantic_answer_tree` segment used by the matcher above.
+Merge the output into `~/.codex/hooks.json` or the `.codex/hooks.json` of a trusted project. Keep absolute paths because the hook runs from the task's working directory. After restarting Codex, run `/hooks`, inspect the source, matcher, command, and script, and trust the exact definition. A changed definition must be reviewed again. See the [Codex Hooks documentation](https://learn.chatgpt.com/docs/hooks).
 
-A non-managed command hook must be reviewed and trusted. After restarting Codex, run `/hooks` and verify the source, matcher, command, and script contents before trusting the exact definition. Any change to the hook definition requires another review. A project hook also requires trusting that project's `.codex` configuration layer. Do not use bypass trust for routine configuration, and do not configure another hook that rewrites the same calls. See the [Codex Hooks documentation](https://learn.chatgpt.com/docs/hooks) for details about inputs, `updatedInput`, and trust.
+If hook input has neither `session_id` nor `turn_id`, the hook does not invent identity. The service rejects the call unless an explicit binding and turn-specific idempotency key are supplied.
 
-If hook input has neither a stable `session_id` nor a `turn_id`, the included script passes through the original arguments instead of inventing identity. The MCP server or service then rejects missing identity or idempotency unless you have configured the explicit session binding below and supplied a reusable idempotency key explicitly for that turn.
+Alternative identity strategies:
 
-### Alternative Identity Strategies
+- App Server wrapper: use `thread.id` as the conversation key and `turn.id` as the turn key. Do not use `thread.sessionId` as fork identity; a persisted fork receives a new `thread.id` but retains the root's `thread.sessionId`. See the [Codex App Server documentation](https://learn.chatgpt.com/docs/app-server).
+- Temporary side chat: use the bundled hook's isolated binding when only `turn_id` exists. Never substitute an ID copied from a main task.
+- Manual binding: only when no hook or wrapper is available, configure a unique `SEMANTIC_ANSWER_SESSION_KEY` for that conversation. It does not follow a task or fork automatically.
 
-- App Server wrapper: use the returned `thread.id` as the source conversation key and `turn.id` as the source turn key. Do not use `thread.sessionId` as fork identity. A persistent fork has a new `thread.id` but retains the root `thread.sessionId`. See the [Codex App Server documentation](https://learn.chatgpt.com/docs/app-server).
-- Temporary side chat: when Codex supplies `turn_id` without `session_id`, use the bundled hook's isolated `codex-temporary:v1:` binding. Do not substitute an ID copied from a main task.
-- Explicit fallback: only when neither a hook nor a wrapper is available, set a unique `SEMANTIC_ANSWER_SESSION_KEY` in an MCP configuration dedicated to that conversation. This is a manual binding; it does not automatically follow a thread, fork, or new conversation.
+`SEMANTIC_ANSWER_TURN_KEY` must change for every logical turn. Never set it statically in a reused MCP configuration. Never infer conversation identity from a working directory, process ID, browser tab, or “latest session.”
 
-The implementation also accepts `SEMANTIC_ANSWER_TURN_KEY`, but its value must change with every logical turn. Never set it statically in a reused MCP configuration, or it will cause `source_turn_conflict`. For the normal fallback, provide the source turn and idempotency key directly in that turn's tool arguments.
+## 5. Install `semantic-answer-final`
 
-Never derive identity from the current working directory, process ID, browser tab, or a "latest session" concept.
-
-## 5. Install and Use `semantic-zoom-final`
-
-Install the skill into the user-level directory from the project root:
+From the project root on Windows:
 
 ```powershell
 $userProfile = [Environment]::GetFolderPath("UserProfile")
-$skillTarget = Join-Path $userProfile ".agents\skills\semantic-zoom-final"
+$skillTarget = Join-Path $userProfile ".agents\skills\semantic-answer-final"
 New-Item -ItemType Directory -Force $skillTarget | Out-Null
-Copy-Item .\semantic-zoom-final\* $skillTarget -Recurse -Force
+Copy-Item .\semantic-answer-final\* $skillTarget -Recurse -Force
 ```
 
-On Linux Bash:
+On Linux:
 
 ```bash
-SKILL_TARGET="$HOME/.agents/skills/semantic-zoom-final"
+SKILL_TARGET="$HOME/.agents/skills/semantic-answer-final"
 mkdir -p "$SKILL_TARGET"
-cp -a semantic-zoom-final/. "$SKILL_TARGET/"
+cp -a semantic-answer-final/. "$SKILL_TARGET/"
 ```
 
-Codex normally discovers the skill automatically. Restart Codex if it does not appear. See the [official Skills documentation](https://developers.openai.com/codex/skills) for location and discovery rules.
+Restart Codex if the skill does not appear. See the [official Skills documentation](https://developers.openai.com/codex/skills).
 
 ```text
-Use $semantic-zoom-final to publish the final answer to Semantic Answer Tree.
+Use $semantic-answer-final to publish the final answer to Semantic Answer.
 ```
 
-The runtime skill stays intentionally small. It covers only model-authored decisions: compact history use, the concise `requestSummary`, the semantic-tree invariant, structural versus lexical zoom, proportional detail, and the single final-answer surface. The MCP tool schema and service own the exact payload shape and validation; the hook owns source identity and the idempotency key; the MCP adapter owns acknowledgement validation and one identical retry after ambiguous delivery. Each local MCP HTTP attempt has a ten-second deadline, so a stalled request reaches recovery or a safe fallback instead of hanging indefinitely.
-
-After receiving the durable `{ ok: true, sessionId, turnId, sequence }` acknowledgment, the skill outputs only:
+The skill keeps the main body concise and complete, uses sparse `[visible text](zoom:id)` anchors, and keeps decision-changing caveats visible. After durable `{ ok: true, sessionId, turnId, sequence }` acknowledgement, it outputs only:
 
 ```text
-Rendered in Semantic Answer Tree.
+Rendered in Semantic Answer.
 ```
 
-After a successful publication, the normal final response must not repeat the answer body, JSON, a Markdown summary, or a glossary.
+It may repair one reported document-validation issue. Ambiguous delivery recovery happens in the adapter, which retries once with the identical serialized envelope and a ten-second deadline for each loopback attempt. If durable publication cannot be confirmed, Codex gives the complete answer in the conversation and does not claim success.
 
-After a validation rejection, the skill may correct the reported document issue once. Ambiguous delivery recovery is automatic inside the MCP adapter and reuses the exact serialized envelope. If a durable acknowledgment still cannot be confirmed, the skill does not output the rendered status and instead gives the complete ordinary answer in the current conversation.
+## 6. HTTP API and answer contract
 
-## 6. HTTP API and Fallback
-
-The local API provides these routes:
+Routes:
 
 | Method and path | Authentication | Purpose |
 | --- | --- | --- |
-| `GET /health` | None | Checks whether the service is reachable. Success returns only `{ ok: true }`. |
+| `GET /health` | None | Returns `{ ok: true }` when the service is reachable. |
 | `GET /api/sessions` | None | Lists viewer sessions. |
-| `GET /api/sessions/:id/turns?beforeSequence=&afterSequence=&limit=20&detail=full` | None | Reads one paginated session of turns. |
-| `GET /api/turns/:id?detail=full` | None | Reads one full immutable turn. |
-| `GET /api/history?sourceSessionKey=&beforeSequence=&limit=&detail=roots|frontier` | Bearer | Lets an agent read compact history. |
-| `POST /api/publish` | Bearer | Validates and appends a complete publication envelope. |
-| `GET /events` | None | SSE stream. It sends `ready` first, followed by `turn-published` events and heartbeats. |
+| `GET /api/sessions/:id/turns?beforeSequence=&afterSequence=&limit=20` | None | Reads one paginated transcript. |
+| `GET /api/turns/:id` | None | Reads one complete immutable turn. |
+| `GET /api/history?sourceSessionKey=&beforeSequence=&limit=` | Bearer | Reads compact answer previews for an agent. |
+| `POST /api/publish` | Bearer | Validates and appends a publication envelope. |
+| `GET /events` | None | Sends `ready`, then identifier-only `turn-published` events and heartbeats. |
 
 Protected routes use:
 
@@ -394,11 +354,28 @@ Protected routes use:
 Authorization: Bearer <token>
 ```
 
-This is a single-user loopback viewer, not tenant isolation. The service refuses to bind to any host other than `127.0.0.1`. The token protects publishing and compact history, while the session list, full turns, and SSE remain unauthenticated loopback reads required by the viewer. Any process that can make direct local requests can read the entire transcript. Request summaries and answers are plaintext in SQLite; append-only storage does not provide encryption or per-session authorization.
+This is a single-user loopback viewer, not tenant isolation. The token protects publishing and agent history reads. Session lists, complete turns, and events are unauthenticated loopback reads required by the viewer. Any process that can directly reach the local service can read the transcript. Request summaries and answers are plaintext in SQLite; append-only storage is not encryption or per-session authorization.
 
-The turn page's `beforeSequence` and `afterSequence` values are exclusive cursors and cannot be supplied together. Results are returned in ascending sequence order. The default and maximum turn-page limits are 20 and 100. The default and maximum history limits are 10 and 50, and its default `detail` is `roots`. Viewer turn detail defaults to `full` when omitted. List, page, and single-turn responses respectively use `{ sessions }`, `{ sessionId, turns, hasOlder, hasNewer, oldestSequence, latestSequence }`, and `{ turn }`. History returns `{ session, turns, hasOlder, oldestSequence, latestSequence, detail }`.
+The sole document format is:
 
-The HTTP fallback must submit a complete envelope with `application/json`, not a bare `SemanticAnswer`. `sourceTurnKey` may be omitted. The other four fields are required in the resolved service envelope:
+```ts
+type SemanticAnswer = {
+  version: 1;
+  title: string;
+  body: string;
+  expansions?: Record<string, {
+    kind: "definition" | "detail";
+    title?: string;
+    content: string;
+  }>;
+};
+```
+
+An inline `[visible span](zoom:expansion-id)` in `body` opens the matching expansion. Definitions appear in accessible popovers. Details appear in a fixed right rail on desktop and a bottom sheet at narrower widths. Only one expansion is open at a time. `Copy body` copies the visible answer; `Copy complete` includes expansion content.
+
+The body must be useful by itself. Every stored expansion must be referenced, every reference must resolve, and expansion content cannot contain another `zoom:` link. Links inside code spans and fenced code blocks are treated as examples rather than anchors. Expansion identifiers use lowercase ASCII letters, digits, `.`, `_`, and `-`.
+
+The publication endpoint accepts a complete envelope, not a bare document:
 
 ```json
 {
@@ -408,15 +385,22 @@ The HTTP fallback must submit a complete envelope with `application/json`, not a
   "document": {
     "version": 1,
     "title": "Solver comparison",
-    "root": {
-      "content": "..."
+    "body": "Choose A for the default case. [Why](zoom:why-a)",
+    "expansions": {
+      "why-a": {
+        "kind": "detail",
+        "title": "Why A is the default",
+        "content": "A has the lower operating cost under the stated constraints."
+      }
     }
   },
   "idempotencyKey": "stable-key-for-this-turn"
 }
 ```
 
-PowerShell example:
+`sourceTurnKey` may be omitted; the other four envelope fields are required after identity resolution.
+
+PowerShell publication example:
 
 ```powershell
 $token = (Get-Content .\.semantic-answer\capability-token -Raw).Trim()
@@ -430,7 +414,7 @@ Invoke-RestMethod `
   -InFile .\publication-envelope.json
 ```
 
-Successful acknowledgment:
+Successful acknowledgement:
 
 ```json
 {
@@ -441,40 +425,40 @@ Successful acknowledgment:
 }
 ```
 
-An SSE connection first receives a `ready` event whose payload is `{ "ok": true }`. Each later `turn-published` payload contains exactly `eventId`, `sessionId`, `turnId`, and `sequence`, with no answer body. Given a known `Last-Event-ID`, a client can replay up to 100 subsequent committed events. An unknown ID causes no replay.
+Submitting the same idempotency key and identical envelope in one session returns the original acknowledgement without appending or emitting again. Reusing the key for different content returns a conflict.
 
-The service rejects unknown envelope fields, an oversized HTTP body, and abnormal session, idempotency, or request-summary lengths. Schema-v1 validation also limits tree depth, node count, per-node Markdown, total document size, term count, and term ID and definition sizes. Validation responses contain only sanitized structured issues. The viewer sanitizes Markdown, and expanding a node or term never calls the model.
+Turn-page cursors are exclusive and `beforeSequence` and `afterSequence` cannot be combined. Results are ascending. The default and maximum turn-page limits are 20 and 100; history limits are 10 and 50. List, page, single-turn, and history responses use `{ sessions }`, `{ sessionId, turns, hasOlder, hasNewer, oldestSequence, latestSequence }`, `{ turn }`, and `{ session, turns, hasOlder, oldestSequence, latestSequence }`.
 
-Common HTTP statuses are `400` for an invalid query or envelope, `404` for not found, `405` for an unsupported method, `409` for an idempotency or source-turn conflict, `413` for an oversized body, `415` for a non-JSON media type, and `500` for an internal error. The error envelope is `{ ok: false, error: { code, message, ... } }` and never echoes a rejected answer value.
+An event connection first receives `ready` with `{ "ok": true }`. Each `turn-published` payload contains only `eventId`, `sessionId`, `turnId`, and `sequence`. A known `Last-Event-ID` can replay up to 100 subsequent committed events; an unknown ID triggers no replay.
 
-## 7. Legacy Import and Database Migrations
+The service rejects unknown fields, unresolved or unused expansions, nested anchors, oversized input, abnormal identity or summary lengths, and malformed media types. Validation errors contain sanitized paths and messages, never rejected answer text. Markdown is sanitized before rendering.
 
-When the HTTP service starts, it automatically:
+Common statuses are `400` for an invalid query or envelope, `404` for not found, `405` for an unsupported method, `409` for an idempotency or source-turn conflict, `413` for an oversized body, `415` for non-JSON media, and `500` for an internal error. Errors use `{ ok: false, error: { code, message, ... } }`.
 
-1. Opens `SEMANTIC_ANSWER_DB`.
-2. Enables foreign keys, a busy timeout, WAL, and `synchronous=FULL`.
-3. Applies every unrecorded `server/migrations/NNN_name.sql` migration in order.
+## 7. Database startup and reset
 
-The service does not read a legacy file by default. It attempts to read one only when `SEMANTIC_ANSWER_LEGACY_FILE` is explicitly set, and it skips the import if that file does not exist. A valid schema-v1 file is read without modification and imported once into a fixed imported session. The absolute source path is stored in the import marker, so the same path is never imported twice. The original file is not moved, deleted, or rewritten. Invalid legacy JSON or schema does not contaminate the database; startup continues, and the invalid status remains only in the service's internal import result.
+At startup the service opens `SEMANTIC_ANSWER_DB`, enables foreign keys, a busy timeout, write-ahead logging, and `synchronous=FULL`, then applies each unrecorded `server/migrations/NNN_name.sql` file in order. Each migration and its record commit together; failure rolls back and prevents startup with a partially changed schema.
 
-See [Design and Migration](DESIGN-MIGRATION.md) for transaction, immutable-turn, and backup details.
+This release uses only the current linear-answer document contract. For an installation created with a different answer document shape, stop the API and viewer, preserve the capability token, back up the database if desired, remove only the database plus its `-wal` and `-shm` companions, and restart the service to create a fresh transcript. Do not edit immutable turn rows by hand.
 
-## 8. Hosted Demo and Privacy
+With write-ahead logging enabled, stop the service before copying a database or use a SQLite-aware backup instead of copying only the live main file.
 
-Hosted Sites deployments must remain private, and both `d1` and `r2` in `.openai/hosting.json` must be `null`. The hosted build reads only the synthetic `public/demo-transcript.json`; a non-localhost page never connects to the local API or SQLite.
+## 8. Hosted demonstration and privacy
 
-The application code loads no remote images, telemetry, or remote fonts. The default runtime directory is the ignored `.semantic-answer/`. If you override the database, legacy, or token path, the configured path must also remain private and ignored and must not be copied into `public/`. The hosted demo and private local data use separate data paths.
+Hosted Sites deployments must remain private. Both `d1` and `r2` in `.openai/hosting.json` must be `null`. A hosted build reads only synthetic `public/demo-transcript.json`; outside a local hostname the page does not connect to the local API or SQLite.
 
-`npm run build` applies a privacy scan to `dist` for known database, token, path, and canary leaks. This is a targeted release gate, not proof that arbitrary private text can never enter a bundle.
+The application loads no remote images, telemetry, or remote fonts. Runtime data belongs in the ignored `.semantic-answer/` directory. Any overridden database or token path must also remain private, ignored, and outside `public/`.
+
+`npm run build` scans `dist` for known database, token, path, and canary leaks. This is a focused release check, not proof that a bundle can contain no arbitrary private text.
 
 ## 9. Troubleshooting
 
-- `401`: confirm that the HTTP service and MCP adapter use the same `SEMANTIC_ANSWER_TOKEN` or the same absolute `SEMANTIC_ANSWER_TOKEN_FILE`.
-- `403 origin_forbidden`: add the actual viewer origin exactly to `SEMANTIC_ANSWER_VIEWER_ORIGINS`.
-- `missing_session_identity`: enable and trust the included hook. A side chat with a `turn_id` receives an isolated Temporary session automatically; if the hook has no turn identity either, use `SEMANTIC_ANSWER_SESSION_KEY` only when you explicitly accept a manual binding.
-- Hook does not run: use `/hooks` to inspect the source, matcher, hash, and trust status. Confirm that the matcher matches the underscore-normalized `mcp__semantic_answer_tree__...` tool name.
-- MCP connects but publishing fails: confirm that `npm run local` is running, verify `SEMANTIC_ANSWER_SERVICE_URL`, and request `GET /health`.
-- A timeout leaves the write uncertain: retry only with the same envelope and idempotency key; do not generate a new key.
-- Migration fails: the service will not continue with a partially migrated schema. Fix the cause and restart it; do not manually edit immutable turns.
-- The viewer does not update live: check `GET /events` and `NEXT_PUBLIC_SEMANTIC_ANSWER_API`. Committed data remains available through the session and turn APIs.
-- Codex does not receive a durable acknowledgment: do not output `Rendered in Semantic Answer Tree.` Give the complete answer in the conversation instead.
+- `401`: make the HTTP service and MCP adapter use the same `SEMANTIC_ANSWER_TOKEN` or absolute `SEMANTIC_ANSWER_TOKEN_FILE`.
+- `403 origin_forbidden`: add the exact viewer origin to `SEMANTIC_ANSWER_VIEWER_ORIGINS`.
+- `missing_session_identity`: enable and trust the hook. A side chat with `turn_id` gets an isolated `Temporary` session; if neither identity exists, use a manual session binding only when you accept that limitation.
+- Hook does not run: inspect it with `/hooks` and confirm `^mcp__semantic_answer__(publish_semantic_answer|read_semantic_history)$`.
+- MCP connects but publishing fails: confirm `npm run local` is running, check `SEMANTIC_ANSWER_SERVICE_URL`, and request `GET /health`.
+- A timeout leaves delivery uncertain: retry only with the identical envelope and idempotency key.
+- Database migration fails: fix the cause and restart; do not edit immutable turns.
+- Live updates stop: check `GET /events` and `NEXT_PUBLIC_SEMANTIC_ANSWER_API`. Committed turns remain readable.
+- Durable acknowledgement is missing: do not output `Rendered in Semantic Answer.` Give the complete answer in the conversation.

@@ -3,8 +3,8 @@ import { headers } from "next/headers";
 import "katex/dist/katex.min.css";
 import "./globals.css";
 
-const title = "Semantic Answer Tree";
-const description = "Explore every answer, branch by branch";
+const title = "Semantic Answer";
+const description = "Read the answer. Open only the detail you need.";
 
 export async function generateMetadata(): Promise<Metadata> {
   const requestHeaders = await headers();
@@ -29,7 +29,7 @@ export async function generateMetadata(): Promise<Metadata> {
           url: "/og.png",
           width: 1672,
           height: 941,
-          alt: "Semantic Answer Tree — Explore every answer, branch by branch",
+          alt: "Semantic Answer — Read the answer. Open only the detail you need.",
         },
       ],
     },

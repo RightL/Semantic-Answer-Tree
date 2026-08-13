@@ -32,14 +32,6 @@ CREATE INDEX turns_session_sequence_desc
 CREATE INDEX sessions_updated_desc
   ON sessions(updated_at DESC, id DESC);
 
-CREATE TABLE legacy_imports (
-  source_path TEXT PRIMARY KEY,
-  content_hash TEXT NOT NULL,
-  session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE RESTRICT,
-  turn_id TEXT NOT NULL REFERENCES turns(id) ON DELETE RESTRICT,
-  imported_at TEXT NOT NULL
-);
-
 CREATE TRIGGER turns_block_update
 BEFORE UPDATE ON turns
 BEGIN

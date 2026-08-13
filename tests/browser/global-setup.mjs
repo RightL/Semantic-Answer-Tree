@@ -68,7 +68,6 @@ export default async function globalSetup() {
 
   process.env.SEMANTIC_ANSWER_BROWSER_TEST = "1";
   process.env.SEMANTIC_ANSWER_DB = databasePath;
-  process.env.SEMANTIC_ANSWER_LEGACY_FILE = "";
   process.env.SEMANTIC_ANSWER_TOKEN = capabilityToken;
   process.env.SEMANTIC_ANSWER_TOKEN_FILE = tokenFilePath;
 
@@ -76,7 +75,6 @@ export default async function globalSetup() {
     databasePath,
     dbPath: databasePath,
     allowedOrigins: [viewerOrigin],
-    legacyFilePath: null,
     port: 0,
     token: capabilityToken,
     tokenFilePath,

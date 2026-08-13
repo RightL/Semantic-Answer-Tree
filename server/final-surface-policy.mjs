@@ -1,4 +1,4 @@
-export const VIEWER_SUCCESS_FINAL = "Rendered in Semantic Answer Tree.";
+export const VIEWER_SUCCESS_FINAL = "Rendered in Semantic Answer.";
 
 /** Return one final surface: the fixed viewer acknowledgment or an ordinary answer. */
 export function finalResponseForPublication(publicationSucceeded, ordinaryFallbackAnswer) {

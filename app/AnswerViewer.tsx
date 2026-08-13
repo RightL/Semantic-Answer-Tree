@@ -1,13 +1,12 @@
 "use client";
 
 import {
+  Children,
   useCallback,
   useEffect,
   useLayoutEffect,
-  useMemo,
   useRef,
   useState,
-  type CSSProperties,
   type ReactNode,
 } from "react";
 import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
@@ -16,16 +15,22 @@ import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 
-export type SemanticNode = {
+import {
+  expansionIdFromZoomHref,
+  extractZoomReferences,
+} from "@/shared/zoom-links.mjs";
+
+export type SemanticExpansion = {
+  kind: "definition" | "detail";
+  title?: string;
   content: string;
-  children?: SemanticNode[];
 };
 
 export type SemanticAnswer = {
   version: 1;
   title: string;
-  root: SemanticNode;
-  terms?: Record<string, string>;
+  body: string;
+  expansions?: Record<string, SemanticExpansion>;
 };
 
 export type TranscriptSession = {
@@ -66,7 +71,6 @@ type TurnPage = {
 type StoredSessionState = {
   scrollTop: number;
   selectedTurnId: string | null;
-  expandedByTurn: Record<string, string[]>;
   lastSeenSequence: number;
   anchorTurnId?: string | null;
   anchorSequence?: number | null;
@@ -76,20 +80,23 @@ type StoredSessionState = {
 type StoredTabState = Record<string, StoredSessionState>;
 type SyncState = "file" | "connecting" | "live" | "offline";
 type CopyState = "visible" | "complete" | "error" | null;
-type OpenTerm = {
+type OpenExpansion = {
   instanceId: string;
   turnId: string;
-  termId: string;
+  expansionId: string;
+  expansion: SemanticExpansion;
   trigger: HTMLButtonElement;
-  left: number;
-  bottom: number;
+  triggerId: string;
+  anchorLeft?: number;
+  anchorTop?: number;
+  anchorBottom?: number;
 } | null;
 
 const DEFAULT_API_BASE = "http://127.0.0.1:4318";
 const API_BASE =
   process.env.NEXT_PUBLIC_SEMANTIC_ANSWER_API?.replace(/\/+$/, "") ||
   DEFAULT_API_BASE;
-const TAB_STATE_KEY = "semantic-transcript-reader-v1";
+const TAB_STATE_KEY = "semantic-transcript-reader-v2";
 const PAGE_SIZE = 20;
 const MAX_RENDERED_TURNS = 80;
 const CONTIGUOUS_WINDOW_LIMIT = MAX_RENDERED_TURNS - 1;
@@ -98,14 +105,13 @@ const SEMANTIC_SANITIZE_SCHEMA = {
   ...defaultSchema,
   protocols: {
     ...defaultSchema.protocols,
-    href: [...(defaultSchema.protocols?.href ?? []), "term"],
+    href: [...(defaultSchema.protocols?.href ?? []), "zoom"],
   },
 };
-const TOP_LEVEL_FIELDS = new Set(["version", "title", "root", "terms"]);
-const NODE_FIELDS = new Set(["content", "children"]);
-const TERM_ID_PATTERN = /^[a-z0-9._-]+$/;
-const MAX_DEPTH = 12;
-const MAX_NODES = 1_000;
+const TOP_LEVEL_FIELDS = new Set(["version", "title", "body", "expansions"]);
+const EXPANSION_FIELDS = new Set(["kind", "title", "content"]);
+const EXPANSION_ID_PATTERN = /^[a-z0-9._-]+$/;
+const MAX_EXPANSIONS = 500;
 
 function owns(value: object, key: string): boolean {
   return Object.prototype.hasOwnProperty.call(value, key);
@@ -119,105 +125,27 @@ function sanitize(value: string): string {
   return value.replace(/[^a-zA-Z0-9_-]+/g, "-").replace(/^-+|-+$/g, "") || "item";
 }
 
-function pathKey(path: number[]): string {
-  return path.join("-");
-}
-
-function nodePath(path: number[]): string {
-  return path.length ? pathKey(path) : "root";
-}
-
-function branchLabel(path: number[]): string {
-  return path.map((part) => part + 1).join(".");
-}
-
-function markdownOutsideCode(markdown: string): string {
-  const lines = markdown.split("\n");
-  const visibleLines: string[] = [];
-
-  for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
-    const line = lines[lineIndex];
-    const fence = line.match(/^ {0,3}(`{3,}|~{3,})/);
-    if (fence) {
-      const marker = fence[1][0];
-      const closing = new RegExp(`^ {0,3}${marker}{${fence[1].length},}\\s*$`);
-      while (lineIndex + 1 < lines.length && !closing.test(lines[lineIndex + 1])) {
-        lineIndex += 1;
-      }
-      if (lineIndex + 1 < lines.length) lineIndex += 1;
-      visibleLines.push("");
-      continue;
-    }
-
-    let visible = "";
-    for (let index = 0; index < line.length; ) {
-      if (line[index] !== "`") {
-        visible += line[index];
-        index += 1;
-        continue;
-      }
-      let width = 1;
-      while (line[index + width] === "`") width += 1;
-      const delimiter = "`".repeat(width);
-      const closeIndex = line.indexOf(delimiter, index + width);
-      if (closeIndex === -1) {
-        visible += line.slice(index);
-        break;
-      }
-      visible += " ".repeat(closeIndex + width - index);
-      index = closeIndex + width;
-    }
-    visibleLines.push(visible);
+function withoutZoomLinks(markdown: string): string {
+  const references = extractZoomReferences(markdown);
+  let result = markdown;
+  for (const reference of references.reverse()) {
+    result = `${result.slice(0, reference.index)}${reference.label}${result.slice(reference.index + reference.length)}`;
   }
-
-  return visibleLines.join("\n");
-}
-
-function termReferences(markdown: string): string[] {
-  return Array.from(
-    markdownOutsideCode(markdown).matchAll(
-      /\]\(\s*<?term:([^\s)>]*)>?\s*(?:["'][^"']*["']\s*)?\)/g,
-    ),
-    (match) => match[1],
-  );
-}
-
-function isNode(
-  value: unknown,
-  state: { nodes: number; references: string[] },
-  depth: number,
-): value is SemanticNode {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
-  const node = value as Record<string, unknown>;
-  state.nodes += 1;
-  if (
-    depth > MAX_DEPTH ||
-    state.nodes > MAX_NODES ||
-    !hasOnlyKeys(node, NODE_FIELDS) ||
-    !owns(node, "content") ||
-    typeof node.content !== "string" ||
-    node.content.trim().length === 0 ||
-    new TextEncoder().encode(node.content).byteLength > 256 * 1_024
-  ) {
-    return false;
-  }
-  state.references.push(...termReferences(node.content));
-  return (
-    node.children === undefined ||
-    (Array.isArray(node.children) &&
-      node.children.every((child) => isNode(child, state, depth + 1)))
-  );
+  return result;
 }
 
 function isAnswer(value: unknown): value is SemanticAnswer {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const answer = value as Record<string, unknown>;
-  const state = { nodes: 0, references: [] as string[] };
   if (
     !hasOnlyKeys(answer, TOP_LEVEL_FIELDS) ||
     answer.version !== 1 ||
     typeof answer.title !== "string" ||
-    !isNode(answer.root, state, 0)
+    answer.title.trim().length === 0 ||
+    new TextEncoder().encode(answer.title).byteLength > 4 * 1_024 ||
+    typeof answer.body !== "string" ||
+    answer.body.trim().length === 0 ||
+    new TextEncoder().encode(answer.body).byteLength > 1_024 * 1_024
   ) {
     return false;
   }
@@ -225,27 +153,48 @@ function isAnswer(value: unknown): value is SemanticAnswer {
     return false;
   }
   if (
-    answer.terms !== undefined &&
-    (!answer.terms || typeof answer.terms !== "object" || Array.isArray(answer.terms))
+    answer.expansions !== undefined &&
+    (!answer.expansions || typeof answer.expansions !== "object" || Array.isArray(answer.expansions))
   ) {
     return false;
   }
-  const terms = (answer.terms ?? {}) as Record<string, unknown>;
-  const entries = Object.entries(terms);
+  const expansions = (answer.expansions ?? {}) as Record<string, unknown>;
+  const entries = Object.entries(expansions);
   if (
-    entries.length > 500 ||
+    entries.length > MAX_EXPANSIONS ||
     entries.some(
-      ([termId, definition]) =>
-        !TERM_ID_PATTERN.test(termId) ||
-        termId.length > 128 ||
-        typeof definition !== "string" ||
-        new TextEncoder().encode(definition).byteLength > 64 * 1_024,
+      ([expansionId, candidate]) => {
+        if (
+          !EXPANSION_ID_PATTERN.test(expansionId) ||
+          expansionId.length > 128 ||
+          !candidate ||
+          typeof candidate !== "object" ||
+          Array.isArray(candidate)
+        ) return true;
+        const expansion = candidate as Record<string, unknown>;
+        return (
+          !hasOnlyKeys(expansion, EXPANSION_FIELDS) ||
+          (expansion.kind !== "definition" && expansion.kind !== "detail") ||
+          (expansion.title !== undefined && (
+            typeof expansion.title !== "string" ||
+            new TextEncoder().encode(expansion.title).byteLength > 4 * 1_024
+          )) ||
+          typeof expansion.content !== "string" ||
+          expansion.content.trim().length === 0 ||
+          new TextEncoder().encode(expansion.content).byteLength > 256 * 1_024 ||
+          extractZoomReferences(expansion.content as string).length > 0
+        );
+      },
     )
   ) {
     return false;
   }
-  return state.references.every(
-    (termId) => TERM_ID_PATTERN.test(termId) && owns(terms, termId),
+  const references = extractZoomReferences(answer.body);
+  const referenced = new Set(references.map(({ id }) => id));
+  return (
+    references.every(({ hasRenderedText }) => hasRenderedText) &&
+    references.every(({ id }) => EXPANSION_ID_PATTERN.test(id) && owns(expansions, id)) &&
+    entries.every(([id]) => referenced.has(id))
   );
 }
 
@@ -273,47 +222,22 @@ function isLocalHost(hostname: string): boolean {
   );
 }
 
-function expandablePaths(root: SemanticNode): Set<string> {
-  const result = new Set<string>();
-  const visit = (node: SemanticNode, path: number[]) => {
-    if (path.length && node.children?.length) result.add(pathKey(path));
-    node.children?.forEach((child, index) => visit(child, [...path, index]));
-  };
-  visit(root, []);
-  return result;
-}
+function copyText(answer: SemanticAnswer, complete: boolean): string {
+  const passages = [`# ${answer.title.trim()}`, withoutZoomLinks(answer.body).trim()];
+  if (!complete) return passages.join("\n\n");
 
-function copyText(answer: SemanticAnswer, expanded: Set<string>, complete: boolean): string {
-  const passages: string[] = [];
-  const referencedTerms: string[] = [];
-  const seenTerms = new Set<string>();
-  const visit = (node: SemanticNode, path: number[]) => {
-    if (node.content.trim()) passages.push(node.content.trim());
-    if (complete) {
-      for (const termId of termReferences(node.content)) {
-        if (!seenTerms.has(termId)) {
-          seenTerms.add(termId);
-          referencedTerms.push(termId);
-        }
-      }
-    }
-    if (complete || path.length === 0 || expanded.has(pathKey(path))) {
-      node.children?.forEach((child, index) => visit(child, [...path, index]));
-    }
-  };
-  visit(answer.root, []);
-  const glossary = referencedTerms.flatMap((termId) =>
-    answer.terms && owns(answer.terms, termId)
-      ? [`${termId}: ${answer.terms[termId]}`]
-      : [],
-  );
-  if (complete && glossary.length > 0) {
-    passages.push(
-      "Terms",
-      ...glossary,
-    );
+  const seen = new Set<string>();
+  const appendix: string[] = [];
+  for (const reference of extractZoomReferences(answer.body)) {
+    if (seen.has(reference.id)) continue;
+    seen.add(reference.id);
+    const expansion = answer.expansions?.[reference.id];
+    if (!expansion) continue;
+    const fallbackTitle = withoutZoomLinks(reference.label).replace(/[*_`]/g, "").trim();
+    appendix.push(`### ${expansion.title?.trim() || fallbackTitle || "More context"}`, expansion.content.trim());
   }
-  return [answer.title.trim(), ...passages].join("\n\n");
+  if (appendix.length) passages.push("## Expansions", ...appendix);
+  return passages.join("\n\n");
 }
 
 async function copyToClipboard(value: string): Promise<void> {
@@ -334,7 +258,7 @@ async function copyToClipboard(value: string): Promise<void> {
 }
 
 function safeUrl(url: string): string {
-  return url.startsWith("term:") ? url : defaultUrlTransform(url);
+  return url.startsWith("zoom:") ? url : defaultUrlTransform(url);
 }
 
 function readTabState(): StoredTabState {
@@ -456,59 +380,83 @@ async function getJson<T>(url: string): Promise<T> {
   return (await response.json()) as T;
 }
 
-function TermLink({
+function reactText(children: ReactNode): string {
+  return Children.toArray(children)
+    .map((child) => typeof child === "string" || typeof child === "number" ? String(child) : "")
+    .join("");
+}
+
+function ZoomLink({
   href,
   instanceId,
   turnId,
+  expansion,
   children,
-  openTerm,
-  setOpenTerm,
+  openExpansion,
+  setOpenExpansion,
 }: {
   href: string;
   instanceId: string;
   turnId: string;
+  expansion: SemanticExpansion;
   children: ReactNode;
-  openTerm: OpenTerm;
-  setOpenTerm: (term: OpenTerm) => void;
+  openExpansion: OpenExpansion;
+  setOpenExpansion: (value: OpenExpansion) => void;
 }) {
-  let termId = href.slice(5);
-  try {
-    termId = decodeURIComponent(termId);
-  } catch {
-    // Preserve a malformed-but-readable identifier.
-  }
+  const expansionId = expansionIdFromZoomHref(href);
   const stableTurn = sanitize(turnId);
-  const stableId = sanitize(termId);
-  const popoverId = `term-popover-${stableTurn}-${sanitize(instanceId)}`;
-  const open = openTerm?.instanceId === instanceId && openTerm.turnId === turnId;
+  const stableExpansion = sanitize(expansionId);
+  const triggerId = `zoom-trigger-${stableTurn}-${stableExpansion}-${sanitize(instanceId)}`;
+  const open = openExpansion?.instanceId === instanceId && openExpansion.turnId === turnId;
+  const surfaceId = expansion.kind === "definition"
+    ? `definition-popover-${stableTurn}`
+    : `detail-panel-${stableTurn}`;
+  const label = reactText(children).trim();
+  const quietDetail = expansion.kind === "detail" && label.toLowerCase() === "details";
+  const accessibleLabel = expansion.kind === "definition"
+    ? `Open definition: ${expansion.title?.trim() || label || expansionId}`
+    : `Open details: ${expansion.title?.trim() || label || "More context"}`;
 
   return (
-    <span className="term-anchor">
+    <span className="zoom-anchor">
       <button
+        id={triggerId}
         type="button"
-        className="term-trigger"
-        data-term-trigger
-        data-term-id={termId}
-        data-testid={`term-${stableTurn}-${stableId}`}
+        className={`zoom-trigger zoom-${expansion.kind}-trigger${quietDetail ? " zoom-detail-ellipsis" : ""}`}
+        data-zoom-trigger
+        data-expansion-id={expansionId}
+        data-testid={`zoom-anchor-${stableTurn}-${stableExpansion}`}
+        aria-label={quietDetail ? accessibleLabel : undefined}
+        aria-haspopup="dialog"
         aria-expanded={open}
-        aria-controls={popoverId}
+        aria-controls={surfaceId}
+        title={quietDetail ? "Details" : undefined}
         onClick={(event) => {
           if (open) {
-            setOpenTerm(null);
+            setOpenExpansion(null);
             return;
           }
           const rect = event.currentTarget.getBoundingClientRect();
-          setOpenTerm({
+          const popoverWidth = Math.min(360, window.innerWidth - 32);
+          const anchorLeft = Math.min(
+            window.innerWidth - popoverWidth / 2 - 16,
+            Math.max(popoverWidth / 2 + 16, rect.left + rect.width / 2),
+          );
+          const placeBelow = rect.top < 230;
+          setOpenExpansion({
             instanceId,
             turnId,
-            termId,
+            expansionId,
+            expansion,
             trigger: event.currentTarget,
-            left: Math.min(window.innerWidth - 196, Math.max(196, rect.left + rect.width / 2)),
-            bottom: window.innerHeight - rect.top + 12,
+            triggerId,
+            anchorLeft,
+            anchorTop: placeBelow ? rect.bottom + 12 : undefined,
+            anchorBottom: placeBelow ? undefined : window.innerHeight - rect.top + 12,
           });
         }}
       >
-        {children}
+        {quietDetail ? <span aria-hidden="true">…</span> : children}
       </button>
     </span>
   );
@@ -517,16 +465,18 @@ function TermLink({
 function Markdown({
   content,
   turnId,
-  openTerm,
-  setOpenTerm,
-  allowTerms = true,
-  scope = "content",
+  expansions,
+  openExpansion,
+  setOpenExpansion,
+  allowZoom = true,
+  scope = "body",
 }: {
   content: string;
   turnId: string;
-  openTerm: OpenTerm;
-  setOpenTerm: (term: OpenTerm) => void;
-  allowTerms?: boolean;
+  expansions?: Record<string, SemanticExpansion>;
+  openExpansion: OpenExpansion;
+  setOpenExpansion: (value: OpenExpansion) => void;
+  allowZoom?: boolean;
   scope?: string;
 }) {
   return (
@@ -541,18 +491,21 @@ function Markdown({
         urlTransform={safeUrl}
         components={{
           a: ({ node, href = "", children, title }) => {
-            if (href.startsWith("term:")) {
-              if (!allowTerms) return <>{children}</>;
+            if (href.startsWith("zoom:")) {
+              const expansionId = expansionIdFromZoomHref(href);
+              const expansion = expansions?.[expansionId];
+              if (!allowZoom || !expansion) return <>{children}</>;
               return (
-                <TermLink
+                <ZoomLink
                   href={href}
                   instanceId={`${scope}-${node?.position?.start.offset ?? href}`}
                   turnId={turnId}
-                  openTerm={openTerm}
-                  setOpenTerm={setOpenTerm}
+                  expansion={expansion}
+                  openExpansion={openExpansion}
+                  setOpenExpansion={setOpenExpansion}
                 >
                   {children}
-                </TermLink>
+                </ZoomLink>
               );
             }
             const external = /^https?:\/\//i.test(href);
@@ -585,138 +538,80 @@ function Markdown({
   );
 }
 
-function TermPopover({
-  openTerm,
-  terms,
+function ExpansionSurface({
+  openExpansion,
   onClose,
 }: {
-  openTerm: NonNullable<OpenTerm>;
-  terms: Record<string, string>;
+  openExpansion: NonNullable<OpenExpansion>;
   onClose: () => void;
 }) {
-  const popoverId = `term-popover-${sanitize(openTerm.turnId)}-${sanitize(openTerm.instanceId)}`;
-  const definition = terms[openTerm.termId] ?? "No definition is included in this turn.";
-
-  return (
-    <aside
-      id={popoverId}
-      className="term-popover"
-      data-term-popover
-      data-testid={`term-popover-${sanitize(openTerm.turnId)}`}
-      role="note"
-      aria-label={`${openTerm.termId} definition`}
-      style={{ left: openTerm.left, bottom: openTerm.bottom }}
-    >
-      <span className="term-kicker">In this turn</span>
-      <div className="term-definition">
-        <Markdown
-          content={definition}
-          turnId={openTerm.turnId}
-          openTerm={null}
-          setOpenTerm={() => undefined}
-          allowTerms={false}
-          scope="term-definition"
-        />
-      </div>
-      <button type="button" className="term-close" aria-label="Close definition" onClick={onClose}>
-        Close
-      </button>
-    </aside>
+  const stableTurn = sanitize(openExpansion.turnId);
+  const title = openExpansion.expansion.title?.trim() ||
+    (openExpansion.expansion.kind === "definition" ? "Definition" : "Details");
+  const content = (
+    <Markdown
+      content={openExpansion.expansion.content}
+      turnId={openExpansion.turnId}
+      openExpansion={null}
+      setOpenExpansion={() => undefined}
+      allowZoom={false}
+      scope={`${openExpansion.expansion.kind}-content`}
+    />
   );
-}
 
-function AnswerNode({
-  node,
-  path,
-  turnId,
-  frontier,
-  expanded,
-  toggle,
-  openTerm,
-  setOpenTerm,
-}: {
-  node: SemanticNode;
-  path: number[];
-  turnId: string;
-  frontier: boolean;
-  expanded: Set<string>;
-  toggle: (path: string) => void;
-  openTerm: OpenTerm;
-  setOpenTerm: (term: OpenTerm) => void;
-}) {
-  const root = path.length === 0;
-  const testPath = nodePath(path);
-  const scopedPath = `${sanitize(turnId)}-${testPath}`;
-  const key = pathKey(path);
-  const count = node.children?.length ?? 0;
-  const hasChildren = count > 0;
-  const open = root ? frontier : expanded.has(key);
-  const childrenId = `children-${scopedPath}`;
+  if (openExpansion.expansion.kind === "definition") {
+    return (
+      <aside
+        id={`definition-popover-${stableTurn}`}
+        className="definition-popover"
+        data-expansion-surface
+        data-testid={`definition-popover-${stableTurn}`}
+        role="dialog"
+        aria-labelledby={`definition-title-${stableTurn}`}
+        style={{
+          left: openExpansion.anchorLeft,
+          top: openExpansion.anchorTop,
+          bottom: openExpansion.anchorBottom,
+        }}
+      >
+        <span className="expansion-kicker">Definition</span>
+        <h3 id={`definition-title-${stableTurn}`}>{title}</h3>
+        <div className="definition-content">{content}</div>
+        <button type="button" className="expansion-close" data-expansion-close aria-label="Close definition" onClick={onClose}>
+          Close
+        </button>
+      </aside>
+    );
+  }
 
   return (
-    <section
-      className={`answer-node ${root ? "root-node" : "branch-node"}`}
-      data-node-path={testPath}
-      data-testid={`node-${scopedPath}`}
-      aria-label={root ? "Root answer" : `Answer branch ${branchLabel(path)}`}
-      style={{ "--tree-depth": path.length } as CSSProperties}
-    >
-      <div className="node-paper">
-        <div className="node-meta">
-          <span className="node-label">{root ? "Core answer" : `Branch ${branchLabel(path)}`}</span>
-          {!root && hasChildren ? (
-            <button
-              type="button"
-              className="disclosure"
-              data-disclosure-path={testPath}
-              data-testid={`disclosure-${scopedPath}`}
-              aria-expanded={open}
-              aria-controls={childrenId}
-              onClick={() => toggle(key)}
-            >
-              <span>{open ? "Collapse" : "Explore"}</span>
-              <span className="disclosure-count">
-                {count} {count === 1 ? "branch" : "branches"}
-              </span>
-              <span className="chevron" aria-hidden="true" />
-            </button>
-          ) : !root ? (
-            <span className="node-leaf">End note</span>
-          ) : (
-            <span className="root-open">
-              <span aria-hidden="true" /> {frontier ? "Frontier open" : "Select to explore"}
-            </span>
-          )}
-        </div>
-        <div data-root-content={root ? turnId : undefined} data-testid={root ? `root-content-${sanitize(turnId)}` : undefined}>
-          <Markdown
-            content={node.content}
-            turnId={turnId}
-            openTerm={openTerm}
-            setOpenTerm={setOpenTerm}
-            scope={`${scopedPath}-content`}
-          />
-        </div>
-      </div>
-
-      {hasChildren && open ? (
-        <div id={childrenId} className={`node-children ${root ? "root-children" : "nested-children"}`}>
-          {node.children?.map((child, index) => (
-            <AnswerNode
-              key={`${scopedPath}-${index}`}
-              node={child}
-              path={[...path, index]}
-              turnId={turnId}
-              frontier={frontier}
-              expanded={expanded}
-              toggle={toggle}
-              openTerm={openTerm}
-              setOpenTerm={setOpenTerm}
-            />
-          ))}
-        </div>
-      ) : null}
-    </section>
+    <div className="detail-overlay" data-expansion-overlay>
+      <aside
+        id={`detail-panel-${stableTurn}`}
+        className="detail-panel"
+        data-expansion-surface
+        data-testid={`detail-panel-${stableTurn}`}
+        role="dialog"
+        aria-labelledby={`detail-title-${stableTurn}`}
+      >
+        <header className="detail-heading">
+          <div>
+            <span className="expansion-kicker">Supporting detail</span>
+            <h3 id={`detail-title-${stableTurn}`}>{title}</h3>
+          </div>
+          <button
+            type="button"
+            className="detail-close"
+            data-detail-close
+            aria-label="Close details"
+            onClick={onClose}
+          >
+            <span aria-hidden="true">×</span>
+          </button>
+        </header>
+        <div className="detail-content">{content}</div>
+      </aside>
+    </div>
   );
 }
 
@@ -724,35 +619,25 @@ function TurnCard({
   turn,
   latest,
   selected,
-  expanded,
   copyState,
-  openTerm,
+  openExpansion,
   onSelect,
-  onToggle,
-  onExpandAll,
-  onCollapseAll,
   onCopy,
-  setOpenTerm,
+  setOpenExpansion,
 }: {
   turn: TranscriptTurn;
   latest: boolean;
   selected: boolean;
-  expanded: Set<string>;
   copyState: CopyState;
-  openTerm: OpenTerm;
+  openExpansion: OpenExpansion;
   onSelect: () => void;
-  onToggle: (path: string) => void;
-  onExpandAll: () => void;
-  onCollapseAll: () => void;
   onCopy: (complete: boolean) => void;
-  setOpenTerm: (term: OpenTerm) => void;
+  setOpenExpansion: (value: OpenExpansion) => void;
 }) {
-  const allExpandable = useMemo(() => expandablePaths(turn.answer.root), [turn.answer.root]);
-  const frontier = latest || selected;
   const stableTurn = sanitize(turn.id);
   const copyMessage =
     copyState === "visible"
-      ? "Visible answer copied"
+      ? "Answer body copied"
       : copyState === "complete"
         ? "Complete answer copied"
         : copyState === "error"
@@ -793,19 +678,12 @@ function TurnCard({
       {selected ? (
         <div className="reader-toolbar" aria-label={`Turn ${turn.sequence} controls`}>
           <div className="toolbar-intro">
-            <span className="toolbar-kicker">Reading tree</span>
-            <span>Controls apply only to this turn</span>
+            <span className="toolbar-kicker">Answer actions</span>
+            <span>Copy this turn for use elsewhere</span>
           </div>
           <div className="toolbar-actions">
-            <button type="button" data-testid="expand-all" onClick={onExpandAll} disabled={allExpandable.size === 0}>
-              Expand all
-            </button>
-            <button type="button" data-testid="collapse-all" onClick={onCollapseAll} disabled={expanded.size === 0}>
-              Collapse all
-            </button>
-            <span className="toolbar-divider" aria-hidden="true" />
-            <button type="button" data-testid="copy-visible" onClick={() => onCopy(false)}>
-              Copy visible
+            <button type="button" data-testid="copy-body" onClick={() => onCopy(false)}>
+              Copy body
             </button>
             <button type="button" data-testid="copy-complete" onClick={() => onCopy(true)}>
               Copy complete
@@ -815,16 +693,13 @@ function TurnCard({
         </div>
       ) : null}
 
-      <div className={`answer-tree${frontier ? "" : " answer-root-only"}`} data-testid={`turn-answer-${stableTurn}`}>
-        <AnswerNode
-          node={turn.answer.root}
-          path={[]}
+      <div className="answer-body" data-testid={`turn-answer-${stableTurn}`} data-answer-body={turn.id}>
+        <Markdown
+          content={turn.answer.body}
           turnId={turn.id}
-          frontier={frontier}
-          expanded={expanded}
-          toggle={onToggle}
-          openTerm={openTerm}
-          setOpenTerm={setOpenTerm}
+          expansions={turn.answer.expansions}
+          openExpansion={openExpansion}
+          setOpenExpansion={setOpenExpansion}
         />
       </div>
     </article>
@@ -840,7 +715,6 @@ export function AnswerViewer({ initialTranscript }: { initialTranscript: DemoTra
   const [activeSessionId, setActiveSessionId] = useState(initialSession?.id ?? "");
   const [turns, setTurns] = useState<TranscriptTurn[]>(initialTurns);
   const [selectedTurnId, setSelectedTurnId] = useState<string | null>(initialTurns.at(-1)?.id ?? null);
-  const [expandedByTurn, setExpandedByTurn] = useState<Record<string, Set<string>>>({});
   const [unreadBySession, setUnreadBySession] = useState<Record<string, number>>({});
   const [hasOlder, setHasOlder] = useState(initialSession ? initialSession.turnCount > initialTurns.length : false);
   const [hasNewer, setHasNewer] = useState(false);
@@ -848,7 +722,7 @@ export function AnswerViewer({ initialTranscript }: { initialTranscript: DemoTra
   const [copyState, setCopyState] = useState<CopyState>(null);
   const [loadingDirection, setLoadingDirection] = useState<"older" | "newer" | "latest" | null>(null);
   const [pendingLatest, setPendingLatest] = useState(0);
-  const [openTerm, setOpenTerm] = useState<OpenTerm>(null);
+  const [openExpansion, setOpenExpansion] = useState<OpenExpansion>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const progressRef = useRef<HTMLSpanElement>(null);
@@ -861,7 +735,6 @@ export function AnswerViewer({ initialTranscript }: { initialTranscript: DemoTra
   const turnsRef = useRef(turns);
   const sessionsRef = useRef(sessions);
   const hasNewerRef = useRef(hasNewer);
-  const expandedByTurnRef = useRef(expandedByTurn);
   const followedSequenceRef = useRef(0);
   const userScrollIntentRef = useRef(0);
   const anchorCorrectionTokenRef = useRef(0);
@@ -902,17 +775,10 @@ export function AnswerViewer({ initialTranscript }: { initialTranscript: DemoTra
     if (!sessionId) return;
     const stored = readTabState();
     const current = stored[sessionId];
-    const expanded: Record<string, string[]> = { ...(current?.expandedByTurn ?? {}) };
-    for (const turn of turnsRef.current) {
-      const paths = expandedByTurnRef.current[turn.id];
-      if (paths?.size) expanded[turn.id] = [...paths];
-      else delete expanded[turn.id];
-    }
     const anchor = visibleTurnAnchor(scrollRef.current);
     stored[sessionId] = {
       scrollTop: scrollRef.current?.scrollTop ?? current?.scrollTop ?? 0,
       selectedTurnId: selectedTurnRef.current,
-      expandedByTurn: expanded,
       lastSeenSequence: current?.lastSeenSequence ?? 0,
       anchorTurnId: anchor?.turnId ?? current?.anchorTurnId ?? null,
       anchorSequence: anchor?.sequence ?? current?.anchorSequence ?? null,
@@ -928,7 +794,6 @@ export function AnswerViewer({ initialTranscript }: { initialTranscript: DemoTra
       ...prior,
       scrollTop: scrollRef.current?.scrollTop ?? prior?.scrollTop ?? 0,
       selectedTurnId: selectedTurnRef.current,
-      expandedByTurn: prior?.expandedByTurn ?? {},
       lastSeenSequence: Math.max(prior?.lastSeenSequence ?? 0, sequence),
     };
     writeTabState(stored);
@@ -941,16 +806,6 @@ export function AnswerViewer({ initialTranscript }: { initialTranscript: DemoTra
     if (turnId) url.searchParams.set("turn", turnId);
     else url.searchParams.delete("turn");
     window.history[push ? "pushState" : "replaceState"]({}, "", `${url.pathname}${url.search}${url.hash}`);
-  }, []);
-
-  const applyStoredExpansions = useCallback((stored: StoredSessionState | undefined) => {
-    if (!stored) return;
-    const next = { ...expandedByTurnRef.current };
-    for (const [turnId, paths] of Object.entries(stored.expandedByTurn ?? {})) {
-      next[turnId] = new Set(paths);
-    }
-    expandedByTurnRef.current = next;
-    setExpandedByTurn(next);
   }, []);
 
   const restoreScroll = useCallback((
@@ -1066,7 +921,7 @@ export function AnswerViewer({ initialTranscript }: { initialTranscript: DemoTra
       return initialTranscript.turns.find((turn) => turn.id === turnId) ?? null;
     }
     try {
-      const payload = await getJson<{ turn: unknown }>(`${API_BASE}/api/turns/${encodeURIComponent(turnId)}?detail=full`);
+      const payload = await getJson<{ turn: unknown }>(`${API_BASE}/api/turns/${encodeURIComponent(turnId)}`);
       return isTurn(payload.turn) ? payload.turn : null;
     } catch {
       return null;
@@ -1087,18 +942,16 @@ export function AnswerViewer({ initialTranscript }: { initialTranscript: DemoTra
       activeSessionRef.current = "";
       selectedTurnRef.current = null;
       turnsRef.current = [];
-      expandedByTurnRef.current = {};
       hasNewerRef.current = false;
       setActiveSessionId("");
       setTurns([]);
       setSelectedTurnId(null);
-      setExpandedByTurn({});
       setUnreadBySession({});
       setHasOlder(false);
       setHasNewer(false);
       setLoadingDirection(null);
       setPendingLatest(0);
-      setOpenTerm(null);
+      setOpenExpansion(null);
       setCopyState(null);
       const url = new URL(window.location.href);
       url.searchParams.delete("session");
@@ -1113,19 +966,18 @@ export function AnswerViewer({ initialTranscript }: { initialTranscript: DemoTra
     activeSessionRef.current = sessionId;
     setActiveSessionId(sessionId);
     setSidebarOpen(false);
-    setOpenTerm(null);
+    setOpenExpansion(null);
     setCopyState(null);
     setPendingLatest(0);
     setLoadingDirection("latest");
     const stored = readTabState()[sessionId];
-    applyStoredExpansions(stored);
 
     try {
       const fetchPage = async (beforeSequence?: number): Promise<TurnPage> => {
         if (localMode.current) {
           const cursor = beforeSequence === undefined ? "" : `&beforeSequence=${beforeSequence}`;
           return getJson<TurnPage>(
-            `${API_BASE}/api/sessions/${encodeURIComponent(sessionId)}/turns?limit=${PAGE_SIZE}&detail=full${cursor}`,
+            `${API_BASE}/api/sessions/${encodeURIComponent(sessionId)}/turns?limit=${PAGE_SIZE}${cursor}`,
           );
         }
         const all = initialTranscript.turns.filter((turn) => turn.sessionId === sessionId);
@@ -1203,7 +1055,7 @@ export function AnswerViewer({ initialTranscript }: { initialTranscript: DemoTra
       setLoadingDirection(null);
       setSyncState("offline");
     }
-  }, [applyStoredExpansions, initialTranscript.turns, loadTurnById, persistSessionState, restoreScroll, updateUrl]);
+  }, [initialTranscript.turns, loadTurnById, persistSessionState, restoreScroll, updateUrl]);
 
   const refreshSessions = useCallback(async (): Promise<TranscriptSession[]> => {
     if (!localMode.current) return initialTranscript.sessions;
@@ -1226,7 +1078,7 @@ export function AnswerViewer({ initialTranscript }: { initialTranscript: DemoTra
   const selectTurn = useCallback((turnId: string, push = true) => {
     setSelectedTurnId(turnId);
     selectedTurnRef.current = turnId;
-    setOpenTerm(null);
+    setOpenExpansion(null);
     updateUrl(activeSessionRef.current, turnId, push);
     persistSessionState();
   }, [persistSessionState, updateUrl]);
@@ -1254,7 +1106,7 @@ export function AnswerViewer({ initialTranscript }: { initialTranscript: DemoTra
     setLoadingDirection("older");
     try {
       const page = await getJson<TurnPage>(
-        `${API_BASE}/api/sessions/${encodeURIComponent(sessionId)}/turns?beforeSequence=${beforeSequence}&limit=${PAGE_SIZE}&detail=full`,
+        `${API_BASE}/api/sessions/${encodeURIComponent(sessionId)}/turns?beforeSequence=${beforeSequence}&limit=${PAGE_SIZE}`,
       );
       if (requestSequence.current !== generation || activeSessionRef.current !== sessionId) {
         pendingScrollAnchorRef.current = null;
@@ -1293,7 +1145,7 @@ export function AnswerViewer({ initialTranscript }: { initialTranscript: DemoTra
     setLoadingDirection("newer");
     try {
       const page = await getJson<TurnPage>(
-        `${API_BASE}/api/sessions/${encodeURIComponent(sessionId)}/turns?afterSequence=${afterSequence}&limit=${PAGE_SIZE}&detail=full`,
+        `${API_BASE}/api/sessions/${encodeURIComponent(sessionId)}/turns?afterSequence=${afterSequence}&limit=${PAGE_SIZE}`,
       );
       if (requestSequence.current !== generation || activeSessionRef.current !== sessionId) return;
       const merged = boundTurnWindow(
@@ -1350,7 +1202,6 @@ export function AnswerViewer({ initialTranscript }: { initialTranscript: DemoTra
           stored[session.id] = {
             scrollTop: 0,
             selectedTurnId: null,
-            expandedByTurn: {},
             lastSeenSequence: session.latestSequence,
           };
           initialized.push(session.id);
@@ -1508,64 +1359,70 @@ export function AnswerViewer({ initialTranscript }: { initialTranscript: DemoTra
     };
   }, [jumpToLatest, loadTurnById, markSeen, refreshSessions, selectTurn]);
 
+  const closeExpansion = useCallback((restoreFocus = true) => {
+    const trigger = openExpansion?.trigger;
+    const triggerId = openExpansion?.triggerId;
+    setOpenExpansion(null);
+    if (restoreFocus && triggerId) {
+      requestAnimationFrame(() => {
+        setTimeout(() => {
+          const currentTrigger = document.getElementById(triggerId) as HTMLButtonElement | null;
+          if (currentTrigger) currentTrigger.focus({ preventScroll: true });
+          else if (trigger?.isConnected) trigger.focus({ preventScroll: true });
+        }, 0);
+      });
+    }
+  }, [openExpansion]);
+
   useEffect(() => {
-    if (!openTerm) return;
+    if (!openExpansion) return;
     const outside = (event: PointerEvent) => {
       if (!(event.target instanceof Element)) return;
-      if (openTerm.trigger.contains(event.target) || event.target.closest("[data-term-popover]")) return;
-      setOpenTerm(null);
+      if (
+        openExpansion.trigger.contains(event.target) ||
+        event.target.closest("[data-zoom-trigger]") ||
+        event.target.closest("[data-expansion-surface]")
+      ) return;
+      closeExpansion();
     };
-    const escape = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
-      const trigger = openTerm.trigger;
-      setOpenTerm(null);
-      requestAnimationFrame(() => trigger.focus());
+    const keyboard = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closeExpansion();
+        return;
+      }
     };
     document.addEventListener("pointerdown", outside);
-    document.addEventListener("keydown", escape);
+    document.addEventListener("keydown", keyboard);
+    requestAnimationFrame(() => {
+      const selector = openExpansion.expansion.kind === "detail"
+        ? "[data-detail-close]"
+        : "[data-expansion-close]";
+      document.querySelector<HTMLElement>(selector)?.focus({ preventScroll: true });
+    });
     return () => {
       document.removeEventListener("pointerdown", outside);
-      document.removeEventListener("keydown", escape);
+      document.removeEventListener("keydown", keyboard);
     };
-  }, [openTerm]);
+  }, [closeExpansion, openExpansion]);
 
   useEffect(() => () => {
     if (copyTimer.current) clearTimeout(copyTimer.current);
     if (persistFrame.current !== null) cancelAnimationFrame(persistFrame.current);
   }, []);
 
-  const toggle = useCallback((turnId: string, key: string) => {
-    const paths = new Set(expandedByTurnRef.current[turnId] ?? []);
-    if (paths.has(key)) paths.delete(key);
-    else paths.add(key);
-    const next = { ...expandedByTurnRef.current, [turnId]: paths };
-    expandedByTurnRef.current = next;
-    setExpandedByTurn(next);
-    queueMicrotask(persistSessionState);
-  }, [persistSessionState]);
-
-  const setAllExpanded = useCallback((turn: TranscriptTurn, open: boolean) => {
-    const next = {
-      ...expandedByTurnRef.current,
-      [turn.id]: open ? expandablePaths(turn.answer.root) : new Set<string>(),
-    };
-    expandedByTurnRef.current = next;
-    setExpandedByTurn(next);
-    queueMicrotask(persistSessionState);
-  }, [persistSessionState]);
-
   const copy = useCallback(async (complete: boolean) => {
     const turn = turnsRef.current.find((candidate) => candidate.id === selectedTurnRef.current);
     if (!turn) return;
     try {
-      await copyToClipboard(copyText(turn.answer, expandedByTurn[turn.id] ?? new Set(), complete));
+      await copyToClipboard(copyText(turn.answer, complete));
       setCopyState(complete ? "complete" : "visible");
     } catch {
       setCopyState("error");
     }
     if (copyTimer.current) clearTimeout(copyTimer.current);
     copyTimer.current = setTimeout(() => setCopyState(null), 2200);
-  }, [expandedByTurn]);
+  }, []);
 
   const cancelAnchorCorrection = useCallback(() => {
     userScrollIntentRef.current += 1;
@@ -1602,10 +1459,6 @@ export function AnswerViewer({ initialTranscript }: { initialTranscript: DemoTra
       : syncState === "offline"
         ? "Demo edition · local service unavailable"
         : "Hosted demo edition";
-  const popoverTerms = openTerm
-    ? turns.find((turn) => turn.id === openTerm.turnId)?.answer.terms ?? {}
-    : {};
-
   return (
     <main className="viewer-shell">
       <div className="reading-progress" aria-hidden="true"><span ref={progressRef} /></div>
@@ -1616,7 +1469,7 @@ export function AnswerViewer({ initialTranscript }: { initialTranscript: DemoTra
         </button>
         <div className="brand-lockup">
           <span className="edition-mark" aria-hidden="true"><span /></span>
-          <span><strong>Semantic Answer Tree</strong><small>Explore every answer, branch by branch</small></span>
+          <span><strong>Semantic Answer</strong><small>Read the answer. Open only the detail you need.</small></span>
         </div>
         <div className="active-heading">
           <span>
@@ -1703,15 +1556,11 @@ export function AnswerViewer({ initialTranscript }: { initialTranscript: DemoTra
                   turn={turn}
                   latest={turn.sequence === activeSession?.latestSequence}
                   selected={turn.id === selectedTurnId}
-                  expanded={expandedByTurn[turn.id] ?? new Set()}
                   copyState={turn.id === selectedTurnId ? copyState : null}
-                  openTerm={openTerm}
+                  openExpansion={openExpansion}
                   onSelect={() => selectTurn(turn.id)}
-                  onToggle={(key) => toggle(turn.id, key)}
-                  onExpandAll={() => setAllExpanded(turn, true)}
-                  onCollapseAll={() => setAllExpanded(turn, false)}
                   onCopy={(complete) => void copy(complete)}
-                  setOpenTerm={setOpenTerm}
+                  setOpenExpansion={setOpenExpansion}
                 />
               ))}
 
@@ -1731,16 +1580,8 @@ export function AnswerViewer({ initialTranscript }: { initialTranscript: DemoTra
         </section>
       </div>
 
-      {openTerm ? (
-        <TermPopover
-          openTerm={openTerm}
-          terms={popoverTerms}
-          onClose={() => {
-            const trigger = openTerm.trigger;
-            setOpenTerm(null);
-            requestAnimationFrame(() => trigger.focus());
-          }}
-        />
+      {openExpansion ? (
+        <ExpansionSurface openExpansion={openExpansion} onClose={() => closeExpansion()} />
       ) : null}
     </main>
   );

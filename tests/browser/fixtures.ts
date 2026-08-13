@@ -1,15 +1,16 @@
 import { expect, type APIRequestContext, type Page } from "@playwright/test";
 
-export type SemanticNode = {
+export type SemanticExpansion = {
+  kind: "definition" | "detail";
+  title?: string;
   content: string;
-  children?: SemanticNode[];
 };
 
 export type SemanticAnswer = {
   version: 1;
   title: string;
-  root: SemanticNode;
-  terms?: Record<string, string>;
+  body: string;
+  expansions?: Record<string, SemanticExpansion>;
 };
 
 export type PublishResult = {
@@ -54,8 +55,8 @@ export function semanticAnswer(
   label: string,
   options: {
     deepCanary?: string;
+    definitionContent?: string;
     remoteImageUrl?: string;
-    termDefinition?: string;
   } = {},
 ): SemanticAnswer {
   const imageMarkdown = options.remoteImageUrl
@@ -64,35 +65,36 @@ export function semanticAnswer(
   return {
     version: 1,
     title: `${label} answer`,
-    root: {
-      content:
-        `${label} root with [Semantic Answer Tree](term:semantic-answer-tree).` +
-        imageMarkdown,
-      children: [
-        {
-          content: `${label} branch alpha`,
-          children: [
-            {
-              content: `${label} alpha detail`,
-              children: [
-                {
-                  content:
-                    options.deepCanary ?? `${label} deeply hidden explanation`,
-                },
-              ],
-            },
-            { content: `${label} alpha sibling` },
-          ],
-        },
-        {
-          content: `${label} branch beta`,
-          children: [{ content: `${label} beta detail` }],
-        },
-      ],
-    },
-    terms: {
-      "semantic-answer-tree":
-        options.termDefinition ?? `${label} turn-scoped Semantic Answer Tree definition.`,
+    body: [
+      `${label} is a complete answer with a [concept](zoom:semantic-answer) word anchor.`,
+      "",
+      `Use [the smallest useful explanation](zoom:tradeoff) as the phrase anchor. ` +
+        `[The closed answer remains readable on its own.](zoom:rationale)`,
+      "",
+      `The final paragraph states the conclusion without requiring expansion.${imageMarkdown} ` +
+        `[More detail](zoom:more)`,
+    ].join("\n"),
+    expansions: {
+      "semantic-answer": {
+        kind: "definition",
+        content:
+          options.definitionContent ?? `${label} turn-scoped definition.`,
+      },
+      tradeoff: {
+        kind: "detail",
+        title: "Tradeoff",
+        content: `${label} phrase-level supporting detail.`,
+      },
+      rationale: {
+        kind: "detail",
+        title: "Why the sentence holds",
+        content: `${label} sentence-level supporting detail.`,
+      },
+      more: {
+        kind: "detail",
+        title: "More detail",
+        content: options.deepCanary ?? `${label} paragraph-end supporting detail.`,
+      },
     },
   };
 }
@@ -170,6 +172,10 @@ export function sessionItem(page: Page, sessionId: string) {
 
 export function turnCard(page: Page, turnId: string) {
   return page.getByTestId(`turn-${turnId}`);
+}
+
+export function zoomAnchor(page: Page, turnId: string, expansionId: string) {
+  return page.getByTestId(`zoom-anchor-${turnId}-${expansionId}`);
 }
 
 export function renderedTurnCards(page: Page) {
@@ -299,7 +305,7 @@ export async function anchorOffset(page: Page, anchor: VisibleTurnAnchor) {
 
 export async function storedSessionAnchorId(page: Page, sessionId: string) {
   return page.evaluate((requestedSessionId) => {
-    const raw = sessionStorage.getItem("semantic-transcript-reader-v1");
+    const raw = sessionStorage.getItem("semantic-transcript-reader-v2");
     if (!raw) return null;
     try {
       const state = JSON.parse(raw) as Record<

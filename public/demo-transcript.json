@@ -1,158 +1,86 @@
 {
   "sessions": [
     {
-      "id": "demo-reader-design",
-      "title": "Designing a calm answer reader",
-      "createdAt": "2026-08-08T09:00:00.000Z",
-      "updatedAt": "2026-08-11T10:30:00.000Z",
+      "id": "demo-custom-3d-placement",
+      "title": "Placing custom furniture in a 3D room",
+      "createdAt": "2026-08-10T08:30:00.000Z",
+      "updatedAt": "2026-08-13T09:20:00.000Z",
       "archivedAt": null,
       "latestSequence": 3,
-      "latestTurnId": "demo-reader-003",
+      "latestTurnId": "demo-placement-003",
       "turnCount": 3
-    },
-    {
-      "id": "demo-research-notes",
-      "title": "Organizing a research notebook",
-      "createdAt": "2026-08-07T08:20:00.000Z",
-      "updatedAt": "2026-08-10T15:10:00.000Z",
-      "archivedAt": null,
-      "latestSequence": 2,
-      "latestTurnId": "demo-research-002",
-      "turnCount": 2
     }
   ],
   "turns": [
     {
-      "id": "demo-reader-001",
-      "sessionId": "demo-reader-design",
+      "id": "demo-placement-001",
+      "sessionId": "demo-custom-3d-placement",
       "sequence": 1,
-      "createdAt": "2026-08-08T09:00:00.000Z",
-      "requestSummary": "Outline a reader that reveals supporting detail only when it is useful.",
+      "createdAt": "2026-08-10T08:30:00.000Z",
+      "requestSummary": "How should I let someone place a made-to-measure cabinet in a scanned room without it drifting when the camera moves?",
       "answer": {
         "version": 1,
-        "title": "Begin with one complete thought",
-        "root": {
-          "content": "Lead with a self-contained answer, then attach supporting branches that remain available without competing for attention.",
-          "children": [
-            {
-              "content": "Keep the central claim visible while deeper evidence opens independently.",
-              "children": [
-                {
-                  "content": "Expansion should be local and instant because every branch is already part of the committed answer."
-                }
-              ]
-            },
-            {
-              "content": "Use a restrained visual hierarchy so structure is apparent before any control is pressed."
-            }
-          ]
+        "title": "Anchor the cabinet to the room, not the camera",
+        "body": "Raycast from the pointer into the reconstructed room and store a [surface-local pose](zoom:surface-local-pose): hit position, surface normal, tangent direction, and the room-mesh identifier. Rebuild the cabinet's world transform from that pose on every frame.\n\nKeep the preview translucent until the asset has a valid support surface. On commit, persist the local pose and cabinet dimensions—not the current camera-relative matrix. [Details](zoom:placement-pipeline)",
+        "expansions": {
+          "surface-local-pose": {
+            "kind": "definition",
+            "title": "Surface-local pose",
+            "content": "A placement described relative to a specific piece of room geometry. It remains stable when the camera moves or its tracking estimate is refined."
+          },
+          "placement-pipeline": {
+            "kind": "detail",
+            "title": "Placement pipeline",
+            "content": "1. Cast a ray from the pointer through the camera.\n2. Reject hits outside the floor or wall class allowed by the cabinet.\n3. Build an orthonormal frame from the hit normal and a stable tangent.\n4. Place the cabinet pivot at the hit point plus its configured clearance.\n5. Save the mesh identifier and local transform when the user commits.\n\nIf the reconstructed mesh is replaced, remap the anchor to the closest compatible surface before falling back to world space."
+          }
         }
       }
     },
     {
-      "id": "demo-reader-002",
-      "sessionId": "demo-reader-design",
+      "id": "demo-placement-002",
+      "sessionId": "demo-custom-3d-placement",
       "sequence": 2,
-      "createdAt": "2026-08-09T13:40:00.000Z",
-      "requestSummary": "Add contextual definitions without turning the page into a glossary.",
+      "createdAt": "2026-08-11T14:10:00.000Z",
+      "requestSummary": "What should happen when the cabinet is rotated into a corner or overlaps skirting and sockets?",
       "answer": {
         "version": 1,
-        "title": "Definitions should stay beside the thought",
-        "root": {
-          "content": "Mark only terms whose local meaning matters. A [context note](term:context-note) opens beside the phrase and closes without changing the answer tree.",
-          "children": [
-            {
-              "content": "Definitions belong to the turn that introduced them, preventing an older meaning from leaking into a newer answer."
-            },
-            {
-              "content": "Keyboard focus returns to the marked phrase after the note closes."
-            }
-          ]
-        },
-        "terms": {
-          "context-note": "A short definition scoped to one answer turn and shown only when its marked phrase is activated."
+        "title": "Separate intentional alignment from invalid overlap",
+        "body": "Snap yaw in small increments around the support normal, but keep a modifier or two-finger gesture for continuous rotation. A [clearance envelope](zoom:clearance-envelope) should include doors, drawers, ventilation, and installation space—not only the visible cabinet mesh.\n\nShow the first blocking reason beside the preview and keep the last valid pose available for a one-step undo. Corners can attract the cabinet when both wall distances fall within a small, scale-aware threshold. [Details](zoom:collision-policy)",
+        "expansions": {
+          "clearance-envelope": {
+            "kind": "definition",
+            "title": "Clearance envelope",
+            "content": "An invisible volume representing the space an object needs to operate and be installed. It may be larger than the rendered geometry."
+          },
+          "collision-policy": {
+            "kind": "detail",
+            "title": "Collision and snapping policy",
+            "content": "Evaluate constraints in a predictable order: support, room bounds, fixed obstacles, operational clearance, then optional alignment snaps. Treat sockets and vents as hard exclusions; treat nearby edges and corners as soft snap candidates.\n\nUse hysteresis so a snap remains active until the pointer moves meaningfully beyond the entry threshold. This prevents the preview from flickering between snapped and free placement."
+          }
         }
       }
     },
     {
-      "id": "demo-reader-003",
-      "sessionId": "demo-reader-design",
+      "id": "demo-placement-003",
+      "sessionId": "demo-custom-3d-placement",
       "sequence": 3,
-      "createdAt": "2026-08-11T10:30:00.000Z",
-      "requestSummary": "Make the reader useful across many sessions while preserving the focused answer experience.",
+      "createdAt": "2026-08-13T09:20:00.000Z",
+      "requestSummary": "Give me the smallest production-ready data contract so placements reopen consistently on desktop and AR devices.",
       "answer": {
         "version": 1,
-        "title": "The answer becomes a durable transcript",
-        "root": {
-          "content": "The [Semantic Answer Tree](term:semantic-answer-tree) now keeps immutable turns inside their source sessions. The sidebar moves between conversations; the transcript keeps request context directly above each structured answer.",
-          "children": [
-            {
-              "content": "The latest turn keeps the familiar reading frontier open. Historical turns begin with their root answer and reveal branches when selected.",
-              "children": [
-                {
-                  "content": "Expand, collapse, and copy controls apply only to the selected turn, so actions never spill into nearby history."
-                }
-              ]
-            },
-            {
-              "content": "Earlier pages load upward without moving the sentence already under the reader's eye.",
-              "children": [
-                {
-                  "content": "Only a bounded window of turns remains mounted, with explicit recovery toward newer history when needed."
-                }
-              ]
-            },
-            {
-              "content": "Live updates follow automatically near the bottom. While reading older material, a quiet banner announces the committed turn instead of moving the page."
-            }
-          ]
-        },
-        "terms": {
-          "semantic-answer-tree": "A read-only, session-aware answer tree for structured SemanticAnswer version 1 documents."
-        }
-      }
-    },
-    {
-      "id": "demo-research-001",
-      "sessionId": "demo-research-notes",
-      "sequence": 1,
-      "createdAt": "2026-08-07T08:20:00.000Z",
-      "requestSummary": "Propose a compact way to preserve findings from several small experiments.",
-      "answer": {
-        "version": 1,
-        "title": "Record the decision, evidence, and next check",
-        "root": {
-          "content": "Each note should state what changed, what observation supports it, and what would disprove the current conclusion.",
-          "children": [
-            {
-              "content": "Keep raw measurements linked but separate from the short decision record."
-            },
-            {
-              "content": "Name the next check precisely enough that another person can run it."
-            }
-          ]
-        }
-      }
-    },
-    {
-      "id": "demo-research-002",
-      "sessionId": "demo-research-notes",
-      "sequence": 2,
-      "createdAt": "2026-08-10T15:10:00.000Z",
-      "requestSummary": "Explain how later findings should relate to earlier notes without rewriting history.",
-      "answer": {
-        "version": 1,
-        "title": "Append the correction; preserve the evidence trail",
-        "root": {
-          "content": "Treat each finding as an immutable turn. A later result can supersede an interpretation while the original observation remains readable in sequence.",
-          "children": [
-            {
-              "content": "Use the request summary to show why each follow-up occurred."
-            },
-            {
-              "content": "Make the newest conclusion easy to reach without hiding the path that produced it."
-            }
-          ]
+        "title": "Persist intent, geometry identity, and a recoverable fallback",
+        "body": "Store the asset version, parametric dimensions, anchor identifier, local transform, constraint state, and a world-space fallback. Add a [placement revision](zoom:placement-revision) so concurrent edits cannot silently overwrite one another.\n\nOn load, resolve the anchor first, reapply constraints, and then compare the reconstructed world pose with the fallback. If the difference exceeds your tolerance, ask the user to confirm the remap instead of moving the cabinet invisibly. [Details](zoom:placement-contract)",
+        "expansions": {
+          "placement-revision": {
+            "kind": "definition",
+            "title": "Placement revision",
+            "content": "A monotonically increasing value attached to one saved placement. An update succeeds only when it is based on the current revision."
+          },
+          "placement-contract": {
+            "kind": "detail",
+            "title": "Minimal saved placement",
+            "content": "```json\n{\n  \"assetVersion\": \"cabinet-oak@7\",\n  \"dimensionsMm\": [1200, 420, 900],\n  \"anchorId\": \"room-mesh:wall-18\",\n  \"localMatrix\": [16, \"finite numbers\"],\n  \"constraints\": { \"support\": \"floor\", \"cornerSnap\": true },\n  \"fallbackWorldMatrix\": [16, \"finite numbers\"],\n  \"revision\": 12\n}\n```\n\nValidate every numeric component before applying the transform. Keep asset migrations explicit so an updated cabinet model cannot reinterpret old dimensions without review."
+          }
         }
       }
     }

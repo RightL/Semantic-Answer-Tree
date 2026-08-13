@@ -5,57 +5,44 @@ import test from "node:test";
 
 import { VIEWER_SUCCESS_FINAL } from "../../server/final-surface-policy.mjs";
 
-const skillPath = path.resolve("semantic-zoom-final", "SKILL.md");
+const skillPath = path.resolve("semantic-answer-final", "SKILL.md");
 const skill = readFileSync(skillPath, "utf8");
 const lines = skill.split(/\r?\n/).length;
 
-test("runtime semantic-answer skill stays concise and preserves its six core promises", () => {
-  assert.ok(lines >= 70 && lines <= 110, `runtime skill should stay near 70-100 lines; got ${lines}`);
-
+test("runtime Semantic Answer skill stays concise and preserves the linear-answer contract", () => {
+  assert.ok(lines >= 45 && lines <= 90, `runtime skill should stay concise; got ${lines} lines`);
+  assert.match(skill, /body[^.]*concise, complete Markdown answer/i);
+  assert.match(skill, /directly answer the user without expansions/i);
+  assert.match(skill, /decision-changing caveat[^.]*visible in the body/i);
+  assert.match(skill, /\[visible text\]\(zoom:id\)/i);
+  assert.match(skill, /kind: "definition"[^.]*brief contextual meaning[^.]*popover/i);
+  assert.match(skill, /kind: "detail"[^.]*detail rail or sheet/i);
+  assert.match(skill, /do not place `zoom:` links inside expansion content/i);
+  assert.match(skill, /a simple answer may have no expansions/i);
   assert.match(
     skill,
-    /root must directly answer the main question without expansion/i,
-    "the root must remain independently useful",
+    /requestSummary[^.]*one or two concise sentences[\s\S]*summarize the request, not the answer/i,
+  );
+  assert.match(skill, /read at most one complete prior turn/i);
+  assert.match(skill, /opening it never calls the model/i);
+  assert.match(skill, /repair only the reported issue and retry once/i);
+  assert.match(
+    skill,
+    /one-off side chat[\s\S]*isolated `Temporary` session[\s\S]*never guess or reuse the main task/i,
   );
   assert.match(
     skill,
-    /accurate compression of its entire subtree/i,
-    "recursive semantic compression must remain explicit",
-  );
-  assert.match(
-    skill,
-    /what does this phrase mean here/i,
-    "term definitions must remain contextual",
-  );
-  assert.match(
-    skill,
-    /lexical zoom may appear[\s\S]*any node[\s\S]*any structural depth/i,
-    "lexical zoom must remain available at every tree level",
-  );
-  assert.match(
-    skill,
-    /requestSummary[\s\S]*one or two concise sentences[\s\S]*summarize the request, not the answer/i,
-    "request summaries must remain concise and request-focused",
-  );
-  assert.match(
-    skill,
-    /after confirmed success, emit only:[\s\S]*Rendered in Semantic Answer Tree\./i,
-    "confirmed success must have exactly one viewer answer surface",
+    /after confirmed success, emit only:[\s\S]*Rendered in Semantic Answer\./i,
   );
   assert.equal(skill.includes(VIEWER_SUCCESS_FINAL), true, "success status must not drift");
   assert.match(
     skill,
-    /publication is not confirmed, return the[\s\S]*complete answer normally/i,
-    "unconfirmed publication must fall back to an ordinary final answer",
+    /publication is not confirmed[^.]*give the complete answer normally[^.]*do not claim success/i,
   );
-  assert.match(
-    skill,
-    /one-off side chat[\s\S]*isolated temporary session[\s\S]*never guess or reuse the main/i,
-    "identity-less side chats must use isolated temporary publication without impersonating the main task",
-  );
+  assert.doesNotMatch(skill, /root|children|terms|term:|tree|density|expand all|collapse all/i);
   assert.doesNotMatch(
     skill,
-    /PublicationEnvelope|Bearer token|POST \/api\/publish|durable success only when|same idempotency key/i,
-    "runtime skill must not carry the deterministic transport protocol",
+    /PublicationEnvelope|Bearer token|POST \/api\/publish|same idempotency key/i,
+    "the runtime skill must not carry the deterministic transport protocol",
   );
 });

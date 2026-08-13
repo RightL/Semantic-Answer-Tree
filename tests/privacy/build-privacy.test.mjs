@@ -18,9 +18,10 @@ import {
 } from "../../scripts/check-build-privacy.mjs";
 
 const projectRoot = fileURLToPath(new URL("../../", import.meta.url));
-const tempRoot = path.resolve(
+const testTempRoot = path.resolve(
   process.env.SEMANTIC_TRANSCRIPT_TEST_TEMP_ROOT ?? path.join(projectRoot, "tmp"),
 );
+const tempRoot = path.join(testTempRoot, "semantic-transcript-privacy-tests");
 
 async function createTestDirectory() {
   await mkdir(tempRoot, { recursive: true });

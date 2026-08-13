@@ -1,14 +1,15 @@
 import { Buffer } from "node:buffer";
 
+import { extractZoomReferences } from "../shared/zoom-links.mjs";
+
 export const SEMANTIC_ANSWER_LIMITS = Object.freeze({
-  maxDepth: 12,
-  maxNodes: 1_000,
   maxTitleBytes: 4 * 1_024,
-  maxContentBytes: 256 * 1_024,
+  maxBodyBytes: 1 * 1_024 * 1_024,
   maxDocumentBytes: 2 * 1_024 * 1_024,
-  maxTerms: 500,
-  maxTermIdLength: 128,
-  maxTermDefinitionBytes: 64 * 1_024,
+  maxExpansions: 500,
+  maxExpansionIdLength: 128,
+  maxExpansionTitleBytes: 4 * 1_024,
+  maxExpansionContentBytes: 256 * 1_024,
 });
 
 export const PUBLICATION_ENVELOPE_LIMITS = Object.freeze({
@@ -19,9 +20,10 @@ export const PUBLICATION_ENVELOPE_LIMITS = Object.freeze({
   maxEnvelopeOverheadBytes: 64 * 1_024,
 });
 
-const TOP_LEVEL_FIELDS = new Set(["version", "title", "root", "terms"]);
-const NODE_FIELDS = new Set(["content", "children"]);
-const TERM_ID_PATTERN = /^[a-z0-9._-]+$/;
+const TOP_LEVEL_FIELDS = new Set(["version", "title", "body", "expansions"]);
+const EXPANSION_FIELDS = new Set(["kind", "title", "content"]);
+const EXPANSION_KINDS = new Set(["definition", "detail"]);
+const EXPANSION_ID_PATTERN = /^[a-z0-9._-]+$/;
 const MAX_REPORTED_ISSUES = 50;
 const PUBLICATION_FIELDS = new Set([
   "sourceSessionKey",
@@ -31,10 +33,7 @@ const PUBLICATION_FIELDS = new Set([
   "idempotencyKey",
 ]);
 
-/**
- * A validation error that is safe to return through HTTP or MCP. It contains
- * paths and concise diagnostics, never the rejected answer body.
- */
+/** A validation error safe to return through HTTP or MCP. */
 export class SemanticAnswerValidationError extends Error {
   constructor(issues) {
     super("The semantic answer is invalid.");
@@ -65,77 +64,9 @@ function byteLength(value) {
   return Buffer.byteLength(value, "utf8");
 }
 
-function findClosingFence(lines, startIndex, marker, width) {
-  const closingPattern = new RegExp(`^ {0,3}${marker}{${width},}\\s*$`);
-  for (let index = startIndex + 1; index < lines.length; index += 1) {
-    if (closingPattern.test(lines[index])) {
-      return index;
-    }
-  }
-  return lines.length - 1;
-}
-
-/**
- * Remove code spans and fenced code blocks before recognizing Markdown links.
- * A term-looking string in example code is not a lexical reference.
- */
-function markdownOutsideCode(markdown) {
-  const lines = markdown.split("\n");
-  const visibleLines = [];
-
-  for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
-    const line = lines[lineIndex];
-    const fence = line.match(/^ {0,3}(`{3,}|~{3,})/);
-    if (fence) {
-      const marker = fence[1][0];
-      lineIndex = findClosingFence(lines, lineIndex, marker, fence[1].length);
-      visibleLines.push("");
-      continue;
-    }
-
-    let visible = "";
-    for (let index = 0; index < line.length; ) {
-      if (line[index] !== "`") {
-        visible += line[index];
-        index += 1;
-        continue;
-      }
-
-      let width = 1;
-      while (line[index + width] === "`") {
-        width += 1;
-      }
-      const delimiter = "`".repeat(width);
-      const closeIndex = line.indexOf(delimiter, index + width);
-      if (closeIndex === -1) {
-        visible += line.slice(index);
-        break;
-      }
-      visible += " ".repeat(closeIndex + width - index);
-      index = closeIndex + width;
-    }
-    visibleLines.push(visible);
-  }
-
-  return visibleLines.join("\n");
-}
-
-/**
- * Return the destinations of Markdown links using the custom term: scheme.
- * The public format deliberately supports only the simple link form described
- * by the SemanticAnswer v1 contract.
- */
-export function extractTermReferences(markdown) {
-  const visibleMarkdown = markdownOutsideCode(markdown);
-  const references = [];
-  const linkPattern = /\]\(\s*<?term:([^\s)>]*)>?\s*(?:["'][^"']*["']\s*)?\)/g;
-  let match;
-
-  while ((match = linkPattern.exec(visibleMarkdown)) !== null) {
-    references.push(match[1]);
-  }
-
-  return references;
+/** Return zoom destinations from links that the reader renders. */
+export function extractExpansionReferences(markdown) {
+  return extractZoomReferences(markdown).map(({ id }) => id);
 }
 
 function createIssueCollector() {
@@ -188,6 +119,28 @@ function reportStringLimit(value, limit, path, collector, label) {
   }
 }
 
+function reportRequiredString(value, field, path, collector, options = {}) {
+  const fieldPath = `${path}.${field}`;
+  if (!owns(value, field)) {
+    collector.add({ code: "required", path: fieldPath, message: `${field} is required.` });
+    return null;
+  }
+  if (typeof value[field] !== "string") {
+    collector.add({
+      code: "invalid_type",
+      path: fieldPath,
+      message: `${field} must be a string.`,
+      expected: "string",
+    });
+    return null;
+  }
+  if (options.nonEmpty && value[field].trim().length === 0) {
+    collector.add({ code: "empty_content", path: fieldPath, message: `${field} must not be empty.` });
+  }
+  reportStringLimit(value[field], options.maxBytes, fieldPath, collector, field);
+  return value[field];
+}
+
 /**
  * Validate a SemanticAnswer v1 value without mutating it.
  *
@@ -195,10 +148,6 @@ function reportStringLimit(value, limit, path, collector, label) {
  */
 export function validateSemanticAnswer(value, limits = SEMANTIC_ANSWER_LIMITS) {
   const collector = createIssueCollector();
-  const termReferences = [];
-  const ancestorNodes = new WeakSet();
-  let nodeCount = 0;
-  let stoppedForNodeLimit = false;
 
   if (!isObject(value)) {
     collector.add({
@@ -223,198 +172,159 @@ export function validateSemanticAnswer(value, limits = SEMANTIC_ANSWER_LIMITS) {
     });
   }
 
-  if (!owns(value, "title")) {
-    collector.add({ code: "required", path: "$.title", message: "title is required." });
-  } else if (typeof value.title !== "string") {
+  reportRequiredString(value, "title", "$", collector, {
+    maxBytes: limits.maxTitleBytes,
+    nonEmpty: true,
+  });
+  const body = reportRequiredString(value, "body", "$", collector, {
+    maxBytes: limits.maxBodyBytes,
+    nonEmpty: true,
+  });
+  const bodyZoomReferences = typeof body === "string" ? extractZoomReferences(body) : [];
+  const bodyReferences = bodyZoomReferences.map(({ id }) => id);
+  const referencedIds = new Set();
+  if (bodyZoomReferences.some(({ hasRenderedText }) => !hasRenderedText)) {
     collector.add({
-      code: "invalid_type",
-      path: "$.title",
-      message: "title must be a string.",
-      expected: "string",
+      code: "empty_expansion_label",
+      path: "$.body",
+      message: "Every expansion reference must have a visible label.",
     });
-  } else {
-    reportStringLimit(value.title, limits.maxTitleBytes, "$.title", collector, "title");
   }
-
-  function visitNode(node, path, depth) {
-    if (depth > limits.maxDepth) {
+  for (const expansionId of bodyReferences) {
+    if (
+      !EXPANSION_ID_PATTERN.test(expansionId) ||
+      expansionId.length > limits.maxExpansionIdLength
+    ) {
       collector.add({
-        code: "limit_exceeded",
-        path,
-        message: `Tree depth exceeds the maximum depth of ${limits.maxDepth}.`,
-        limit: limits.maxDepth,
-        actual: depth,
-      });
-      return;
-    }
-
-    if (!isObject(node)) {
-      collector.add({
-        code: "invalid_type",
-        path,
-        message: "Node must be an object.",
-        expected: "object",
-      });
-      return;
-    }
-
-    if (ancestorNodes.has(node)) {
-      collector.add({
-        code: "circular_reference",
-        path,
-        message: "Nodes must not contain circular references.",
-      });
-      return;
-    }
-
-    nodeCount += 1;
-    if (nodeCount > limits.maxNodes) {
-      if (!stoppedForNodeLimit) {
-        stoppedForNodeLimit = true;
-        collector.add({
-          code: "limit_exceeded",
-          path,
-          message: `Tree contains more than ${limits.maxNodes} nodes.`,
-          limit: limits.maxNodes,
-          actual: nodeCount,
-        });
-      }
-      return;
-    }
-
-    ancestorNodes.add(node);
-    reportUnknownFields(node, NODE_FIELDS, path, collector);
-
-    if (!owns(node, "content")) {
-      collector.add({ code: "required", path: `${path}.content`, message: "content is required." });
-    } else if (typeof node.content !== "string") {
-      collector.add({
-        code: "invalid_type",
-        path: `${path}.content`,
-        message: "content must be a string.",
-        expected: "string",
-      });
-    } else if (node.content.trim().length === 0) {
-      collector.add({
-        code: "empty_content",
-        path: `${path}.content`,
-        message: "content must not be empty.",
+        code: "invalid_expansion_reference",
+        path: "$.body",
+        message: `Invalid expansion reference '${expansionId}'.`,
+        reference: expansionId,
       });
     } else {
-      reportStringLimit(
-        node.content,
-        limits.maxContentBytes,
-        `${path}.content`,
-        collector,
-        "Node content",
-      );
-      for (const termId of extractTermReferences(node.content)) {
-        termReferences.push({ termId, path: `${path}.content` });
-      }
+      referencedIds.add(expansionId);
     }
-
-    if (owns(node, "children")) {
-      if (!Array.isArray(node.children)) {
-        collector.add({
-          code: "invalid_type",
-          path: `${path}.children`,
-          message: "children must be an array when present.",
-          expected: "array",
-        });
-      } else {
-        for (let index = 0; index < node.children.length; index += 1) {
-          if (stoppedForNodeLimit) {
-            break;
-          }
-          visitNode(node.children[index], `${path}.children[${index}]`, depth + 1);
-        }
-      }
-    }
-
-    ancestorNodes.delete(node);
   }
 
-  if (!owns(value, "root")) {
-    collector.add({ code: "required", path: "$.root", message: "root is required." });
-  } else {
-    visitNode(value.root, "$.root", 0);
-  }
-
-  const termIds = new Set();
-  if (owns(value, "terms")) {
-    if (!isObject(value.terms)) {
+  const expansionIds = new Set();
+  if (owns(value, "expansions")) {
+    if (!isObject(value.expansions)) {
       collector.add({
         code: "invalid_type",
-        path: "$.terms",
-        message: "terms must be an object when present.",
+        path: "$.expansions",
+        message: "expansions must be an object when present.",
         expected: "object",
       });
     } else {
-      const entries = Object.entries(value.terms);
-      if (entries.length > limits.maxTerms) {
+      const entries = Object.entries(value.expansions);
+      if (entries.length > limits.maxExpansions) {
         collector.add({
           code: "limit_exceeded",
-          path: "$.terms",
-          message: `terms contains more than ${limits.maxTerms} definitions.`,
-          limit: limits.maxTerms,
+          path: "$.expansions",
+          message: `expansions contains more than ${limits.maxExpansions} entries.`,
+          limit: limits.maxExpansions,
           actual: entries.length,
         });
       }
 
-      for (const [termId, definition] of entries.slice(0, limits.maxTerms + 1)) {
-        const termPath = `$.terms[${JSON.stringify(termId)}]`;
-        if (!TERM_ID_PATTERN.test(termId)) {
+      for (const [expansionId, expansion] of entries.slice(0, limits.maxExpansions + 1)) {
+        const expansionPath = `$.expansions[${JSON.stringify(expansionId)}]`;
+        const safeExpansionPath = '$.expansions["<key>"]';
+        const validId =
+          EXPANSION_ID_PATTERN.test(expansionId) &&
+          expansionId.length <= limits.maxExpansionIdLength;
+        if (!validId) {
           collector.add({
-            code: "invalid_term_id",
-            path: termPath,
-            message: "Term IDs may contain only lowercase ASCII letters, digits, '.', '_', and '-'.",
-          });
-        } else if (termId.length > limits.maxTermIdLength) {
-          collector.add({
-            code: "limit_exceeded",
-            path: termPath,
-            message: `Term ID exceeds the ${limits.maxTermIdLength}-character limit.`,
-            limit: limits.maxTermIdLength,
-            actual: termId.length,
+            code: "invalid_expansion_id",
+            path: expansionPath,
+            safePath: safeExpansionPath,
+            message:
+              "Expansion IDs may contain only lowercase ASCII letters, digits, '.', '_', and '-'.",
           });
         } else {
-          termIds.add(termId);
+          expansionIds.add(expansionId);
         }
 
-        if (typeof definition !== "string") {
+        if (!isObject(expansion)) {
           collector.add({
             code: "invalid_type",
-            path: termPath,
-            message: "Term definitions must be strings.",
-            expected: "string",
+            path: expansionPath,
+            safePath: safeExpansionPath,
+            message: "Expansion must be an object.",
+            expected: "object",
           });
-        } else {
-          reportStringLimit(
-            definition,
-            limits.maxTermDefinitionBytes,
-            termPath,
-            collector,
-            "Term definition",
-          );
+          continue;
+        }
+
+        reportUnknownFields(expansion, EXPANSION_FIELDS, expansionPath, collector);
+        if (!owns(expansion, "kind")) {
+          collector.add({
+            code: "required",
+            path: `${expansionPath}.kind`,
+            message: "kind is required.",
+          });
+        } else if (!EXPANSION_KINDS.has(expansion.kind)) {
+          collector.add({
+            code: "invalid_expansion_kind",
+            path: `${expansionPath}.kind`,
+            message: "kind must be definition or detail.",
+            expected: "definition or detail",
+          });
+        }
+
+        if (owns(expansion, "title")) {
+          if (typeof expansion.title !== "string") {
+            collector.add({
+              code: "invalid_type",
+              path: `${expansionPath}.title`,
+              message: "title must be a string when present.",
+              expected: "string",
+            });
+          } else {
+            reportStringLimit(
+              expansion.title,
+              limits.maxExpansionTitleBytes,
+              `${expansionPath}.title`,
+              collector,
+              "Expansion title",
+            );
+          }
+        }
+
+        const content = reportRequiredString(expansion, "content", expansionPath, collector, {
+          maxBytes: limits.maxExpansionContentBytes,
+          nonEmpty: true,
+        });
+        if (typeof content === "string" && extractExpansionReferences(content).length > 0) {
+          collector.add({
+            code: "nested_expansion_reference",
+            path: `${expansionPath}.content`,
+            safePath: `${safeExpansionPath}.content`,
+            message: "Expansion content must not contain zoom references.",
+          });
         }
       }
     }
   }
 
-  for (const { termId, path } of termReferences) {
-    if (!TERM_ID_PATTERN.test(termId) || termId.length > limits.maxTermIdLength) {
+  for (const expansionId of referencedIds) {
+    if (!expansionIds.has(expansionId)) {
       collector.add({
-        code: "invalid_term_reference",
-        path,
-        message: `Invalid term reference '${termId}'.`,
-        reference: termId,
+        code: "unresolved_expansion_reference",
+        path: "$.body",
+        message: `No expansion exists for '${expansionId}'.`,
+        reference: expansionId,
       });
-    } else if (!termIds.has(termId)) {
+    }
+  }
+  for (const expansionId of expansionIds) {
+    if (!referencedIds.has(expansionId)) {
       collector.add({
-        code: "unresolved_term_reference",
-        path,
-        message: `No definition exists for term '${termId}'.`,
-        reference: termId,
+        code: "unused_expansion",
+        path: `$.expansions[${JSON.stringify(expansionId)}]`,
+        safePath: '$.expansions["<key>"]',
+        message: `Expansion '${expansionId}' is not referenced by the body.`,
+        reference: expansionId,
       });
     }
   }
@@ -445,11 +355,9 @@ export function validateSemanticAnswer(value, limits = SEMANTIC_ANSWER_LIMITS) {
     }
   }
 
-  if (collector.issues.length > 0) {
-    return { ok: false, issues: collector.issues };
-  }
-
-  return { ok: true, value };
+  return collector.issues.length > 0
+    ? { ok: false, issues: collector.issues }
+    : { ok: true, value };
 }
 
 export function assertSemanticAnswer(value, limits = SEMANTIC_ANSWER_LIMITS) {
@@ -532,6 +440,14 @@ export function validatePublicationEnvelope(
         collector.add({
           ...issue,
           path: issue.path === "$" ? "$.document" : `$.document${issue.path.slice(1)}`,
+          ...(issue.safePath
+            ? {
+                safePath:
+                  issue.safePath === "$"
+                    ? "$.document"
+                    : `$.document${issue.safePath.slice(1)}`,
+              }
+            : {}),
         });
       }
     }
@@ -545,7 +461,11 @@ export function validatePublicationEnvelope(
   try {
     encoded = JSON.stringify(value);
   } catch {
-    collector.add({ code: "not_serializable", path: "$", message: "Publication must be JSON-serializable." });
+    collector.add({
+      code: "not_serializable",
+      path: "$",
+      message: "Publication must be JSON-serializable.",
+    });
   }
   if (encoded !== undefined) {
     const maximum = answerLimits.maxDocumentBytes + limits.maxEnvelopeOverheadBytes;
@@ -561,10 +481,9 @@ export function validatePublicationEnvelope(
     }
   }
 
-  if (collector.issues.length > 0) {
-    return { ok: false, issues: collector.issues };
-  }
-  return { ok: true, value };
+  return collector.issues.length > 0
+    ? { ok: false, issues: collector.issues }
+    : { ok: true, value };
 }
 
 export function assertPublicationEnvelope(value, limits, answerLimits) {
@@ -576,22 +495,25 @@ export function assertPublicationEnvelope(value, limits, answerLimits) {
 }
 
 const SAFE_ISSUE_MESSAGES = Object.freeze({
-  circular_reference: "A circular reference is not allowed.",
   empty_content: "Content must not be empty.",
+  empty_expansion_label: "Every expansion reference must have a visible label.",
   empty_value: "The value must not be empty.",
-  invalid_term_id: "A term ID is invalid.",
-  invalid_term_reference: "A term reference is invalid.",
+  invalid_expansion_id: "An expansion ID is invalid.",
+  invalid_expansion_kind: "An expansion kind is invalid.",
+  invalid_expansion_reference: "An expansion reference is invalid.",
   invalid_type: "The value has the wrong type.",
   invalid_version: "Only SemanticAnswer version 1 is accepted.",
   limit_exceeded: "A configured size or count limit was exceeded.",
+  nested_expansion_reference: "Expansion content cannot contain an expansion reference.",
   not_serializable: "The value is not JSON-serializable.",
   required: "A required value is missing.",
   too_many_errors: "Too many validation issues were found.",
   unknown_field: "An unknown field is present.",
-  unresolved_term_reference: "A term reference has no matching definition.",
+  unresolved_expansion_reference: "An expansion reference has no matching expansion.",
+  unused_expansion: "An expansion is not referenced by the body.",
 });
 
-/** Strip rejected document values while retaining repairable codes and structural paths. */
+/** Strip rejected values while retaining repairable codes and structural paths. */
 export function sanitizeValidationIssues(issues) {
   return issues.map((issue) => ({
     code: issue.code,

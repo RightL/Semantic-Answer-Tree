@@ -15,7 +15,6 @@ import {
   SemanticTranscriptError,
   SemanticTranscriptStore,
   resolveDatabasePath,
-  resolveLegacyFilePath,
 } from "./store.mjs";
 
 export const DEFAULT_HTTP_HOST = "127.0.0.1";
@@ -174,13 +173,6 @@ function parsePositiveInteger(value, name) {
   return parsed;
 }
 
-function requireFullDetail(url) {
-  const detail = url.searchParams.get("detail");
-  if (detail !== null && detail !== "full") {
-    throw new HttpRequestError(400, "invalid_query", "detail must be full.");
-  }
-}
-
 function isAuthorized(request, token) {
   return capabilityTokenMatches(bearerToken(request.headers.authorization), token);
 }
@@ -269,10 +261,6 @@ export function createSemanticAnswerHttpService(options = {}) {
     options.store ??
     new SemanticTranscriptStore({
       dbPath,
-      legacyFilePath:
-        options.legacyFilePath === undefined
-          ? resolveLegacyFilePath(environment, options.cwd)
-          : options.legacyFilePath,
       environment,
       cwd: options.cwd,
     });
@@ -318,7 +306,6 @@ export function createSemanticAnswerHttpService(options = {}) {
 
       const sessionId = routeIdentifier(pathname, /^\/api\/sessions\/([^/]+)\/turns$/);
       if (sessionId !== null && request.method === "GET") {
-        requireFullDetail(url);
         const page = store.getTurnsPage(sessionId, {
           beforeSequence: parsePositiveInteger(url.searchParams.get("beforeSequence"), "beforeSequence"),
           afterSequence: parsePositiveInteger(url.searchParams.get("afterSequence"), "afterSequence"),
@@ -330,7 +317,6 @@ export function createSemanticAnswerHttpService(options = {}) {
 
       const turnId = routeIdentifier(pathname, /^\/api\/turns\/([^/]+)$/);
       if (turnId !== null && request.method === "GET") {
-        requireFullDetail(url);
         writeJson(response, 200, { turn: store.getTurn(turnId) });
         return;
       }
@@ -341,11 +327,9 @@ export function createSemanticAnswerHttpService(options = {}) {
         if (!sourceSessionKey?.trim()) {
           throw new HttpRequestError(400, "invalid_query", "sourceSessionKey is required.");
         }
-        const detail = url.searchParams.get("detail") ?? "roots";
         const history = store.readHistory(sourceSessionKey, {
           beforeSequence: parsePositiveInteger(url.searchParams.get("beforeSequence"), "beforeSequence"),
           limit: parsePositiveInteger(url.searchParams.get("limit"), "limit"),
-          detail,
         });
         writeJson(response, 200, history);
         return;

@@ -1,7 +1,7 @@
 {
-  "name": "semantic-answer-tree",
+  "name": "semantic-answer",
   "version": "0.1.0",
-  "description": "Explore every answer, branch by branch",
+  "description": "Read the answer. Open only the detail you need.",
   "private": true,
   "repository": {
     "type": "git",
@@ -34,7 +34,10 @@
     "rehype-katex": "^7.0.1",
     "rehype-sanitize": "^6.0.0",
     "remark-gfm": "^4.0.1",
-    "remark-math": "^6.0.0"
+    "remark-math": "^6.0.0",
+    "remark-parse": "^11.0.0",
+    "remark-rehype": "^11.1.2",
+    "unified": "^11.0.5"
   },
   "devDependencies": {
     "@cloudflare/vite-plugin": "1.37.1",

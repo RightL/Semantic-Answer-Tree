@@ -13,7 +13,7 @@ export const TRANSCRIPT_TEST_TEMP_ROOT = path.join(
 );
 
 export function semanticDocument(content = "A valid answer.", title = "Backend test") {
-  return { version: 1, title, root: { content } };
+  return { version: 1, title, body: content };
 }
 
 export function publication(overrides = {}) {

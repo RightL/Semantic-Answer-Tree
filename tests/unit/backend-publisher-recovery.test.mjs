@@ -71,7 +71,7 @@ test("definitive validation rejection is returned without an automatic retry", a
           error: {
             code: "invalid_publish_envelope",
             message: "The publication envelope is invalid.",
-            issues: [{ path: "$.document.root.content", message: "Must not be empty." }],
+            issues: [{ path: "$.document.body", message: "Must not be empty." }],
           },
         },
         { ok: false, status: 400 },

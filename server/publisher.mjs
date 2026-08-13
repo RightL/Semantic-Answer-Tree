@@ -219,14 +219,11 @@ export class SemanticAnswerServiceClient {
     if (argumentsValue.limit !== undefined) {
       query.set("limit", String(argumentsValue.limit));
     }
-    if (argumentsValue.detail !== undefined) {
-      query.set("detail", argumentsValue.detail);
-    }
     return this.request(`/api/history?${query}`);
   }
 
   readTurn(turnId) {
-    return this.request(`/api/turns/${encodeURIComponent(turnId)}?detail=full`);
+    return this.request(`/api/turns/${encodeURIComponent(turnId)}`);
   }
 }
 

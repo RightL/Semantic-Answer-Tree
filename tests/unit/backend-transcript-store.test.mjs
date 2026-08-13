@@ -1,14 +1,11 @@
 import assert from "node:assert/strict";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 
 import {
-  SEMANTIC_ANSWER_LEGACY_FILE_ENV,
   SemanticTranscriptConflictError,
   SemanticTranscriptStore,
-  resolveLegacyFilePath,
 } from "../../server/store.mjs";
 import {
   makeTemporaryDirectory,
@@ -20,7 +17,7 @@ import {
 test("separates interleaved sessions and preserves monotonic append order across reload", async () => {
   const directory = await makeTemporaryDirectory("sessions-");
   const dbPath = path.join(directory, "transcript.sqlite3");
-  let store = new SemanticTranscriptStore({ dbPath, legacyFilePath: null });
+  let store = new SemanticTranscriptStore({ dbPath });
   try {
     assert.equal(store.journalMode(), "wal");
     assert.equal(store.schemaVersion(), 2);
@@ -49,7 +46,7 @@ test("separates interleaved sessions and preserves monotonic append order across
     assert.notEqual(a1.sessionId, b1.sessionId);
     store.close();
 
-    store = new SemanticTranscriptStore({ dbPath, legacyFilePath: null });
+    store = new SemanticTranscriptStore({ dbPath });
     const sessions = store.listSessions();
     assert.equal(sessions.length, 2);
     assert.equal(sessions.find((session) => session.id === a1.sessionId).turnCount, 2);
@@ -67,7 +64,6 @@ test("identical retries return the exact acknowledgment without another turn or 
   const directory = await makeTemporaryDirectory("idempotency-");
   const store = new SemanticTranscriptStore({
     dbPath: path.join(directory, "transcript.sqlite3"),
-    legacyFilePath: null,
   });
   const events = [];
   store.onTurnPublished((event) => events.push(event));
@@ -116,17 +112,12 @@ test("rolls back failed appends and emits only after the committed turn is query
   let shouldFail = true;
   const store = new SemanticTranscriptStore({
     dbPath: path.join(directory, "transcript.sqlite3"),
-    legacyFilePath: null,
     beforeCommit() {
-      if (shouldFail) {
-        throw new Error("injected failure");
-      }
+      if (shouldFail) throw new Error("injected failure");
     },
   });
   const observed = [];
-  store.onTurnPublished((event) => {
-    observed.push(store.getTurn(event.turnId));
-  });
+  store.onTurnPublished((event) => observed.push(store.getTurn(event.turnId)));
   try {
     assert.throws(() => store.publish(publication()), /injected failure/);
     assert.deepEqual(store.listSessions(), []);
@@ -145,7 +136,7 @@ test("rolls back failed appends and emits only after the committed turn is query
 test("database triggers enforce turn immutability", async () => {
   const directory = await makeTemporaryDirectory("immutable-");
   const dbPath = path.join(directory, "transcript.sqlite3");
-  const store = new SemanticTranscriptStore({ dbPath, legacyFilePath: null });
+  const store = new SemanticTranscriptStore({ dbPath });
   let inspector;
   try {
     const acknowledgment = store.publish(publication());
@@ -170,7 +161,6 @@ test("paginates older and newer turns chronologically with honest boundaries", a
   const directory = await makeTemporaryDirectory("pagination-");
   const store = new SemanticTranscriptStore({
     dbPath: path.join(directory, "transcript.sqlite3"),
-    legacyFilePath: null,
   });
   try {
     let sessionId;
@@ -207,123 +197,31 @@ test("paginates older and newer turns chronologically with honest boundaries", a
   }
 });
 
-test("imports the compatibility file only when the legacy environment path is explicit", async () => {
-  const directory = await makeTemporaryDirectory("legacy-config-");
-  const compatibilityDirectory = path.join(directory, "public");
-  const compatibilityPath = path.join(compatibilityDirectory, "latest-answer.json");
-  await mkdir(compatibilityDirectory, { recursive: true });
-  await writeFile(
-    compatibilityPath,
-    JSON.stringify(semanticDocument("Explicit legacy environment input")),
-    "utf8",
-  );
-
-  assert.equal(resolveLegacyFilePath({}, directory), null);
-  assert.equal(resolveLegacyFilePath({ [SEMANTIC_ANSWER_LEGACY_FILE_ENV]: "" }, directory), null);
-  assert.equal(
-    resolveLegacyFilePath(
-      { [SEMANTIC_ANSWER_LEGACY_FILE_ENV]: path.join("public", "latest-answer.json") },
-      directory,
-    ),
-    compatibilityPath,
-  );
-
-  let store = new SemanticTranscriptStore({
-    cwd: directory,
-    dbPath: path.join(directory, "unconfigured.sqlite3"),
-    environment: {},
-  });
-  try {
-    assert.equal(store.legacyFilePath, null);
-    assert.equal(store.legacyImport.status, "missing");
-    assert.deepEqual(store.listSessions(), []);
-  } finally {
-    store.close();
-  }
-
-  store = new SemanticTranscriptStore({
-    cwd: directory,
-    dbPath: path.join(directory, "configured.sqlite3"),
-    environment: {
-      [SEMANTIC_ANSWER_LEGACY_FILE_ENV]: path.join("public", "latest-answer.json"),
-    },
-  });
-  try {
-    assert.equal(store.legacyFilePath, compatibilityPath);
-    assert.equal(store.legacyImport.status, "imported");
-    assert.equal(store.listSessions().length, 1);
-  } finally {
-    store.close();
-    await removeTemporaryDirectory(directory);
-  }
-});
-
-test("imports a valid legacy answer once, preserves its bytes, and retries invalid input later", async () => {
-  const directory = await makeTemporaryDirectory("legacy-");
-  const legacyFilePath = path.join(directory, "latest-answer.json");
-  const dbPath = path.join(directory, "transcript.sqlite3");
-  const originalBytes = `${JSON.stringify(semanticDocument("Legacy content"), null, 2)}\n`;
-  await writeFile(legacyFilePath, originalBytes, "utf8");
-  let store = new SemanticTranscriptStore({ dbPath, legacyFilePath });
-  try {
-    assert.equal(store.legacyImport.status, "imported");
-    assert.equal(store.listSessions()[0].title, "Imported · Previous single-document viewer");
-    assert.equal(store.getTurnsPage(store.listSessions()[0].id).turns[0].requestSummary,
-      "Imported answer from the previous single-document viewer");
-    assert.equal(await readFile(legacyFilePath, "utf8"), originalBytes);
-    store.close();
-
-    store = new SemanticTranscriptStore({ dbPath, legacyFilePath });
-    assert.equal(store.legacyImport.status, "already-imported");
-    assert.equal(store.listSessions()[0].turnCount, 1);
-  } finally {
-    store.close();
-  }
-
-  const invalidPath = path.join(directory, "invalid-legacy.json");
-  const retryDb = path.join(directory, "retry.sqlite3");
-  await writeFile(invalidPath, "{invalid", "utf8");
-  store = new SemanticTranscriptStore({ dbPath: retryDb, legacyFilePath: invalidPath });
-  assert.equal(store.legacyImport.status, "invalid");
-  assert.deepEqual(store.listSessions(), []);
-  store.close();
-  await writeFile(invalidPath, JSON.stringify(semanticDocument("Now valid")), "utf8");
-  store = new SemanticTranscriptStore({ dbPath: retryDb, legacyFilePath: invalidPath });
-  try {
-    assert.equal(store.legacyImport.status, "imported");
-    assert.equal(store.listSessions()[0].turnCount, 1);
-  } finally {
-    store.close();
-    await removeTemporaryDirectory(directory);
-  }
-});
-
-test("history is compact by default while one-turn lookup returns the full immutable answer", async () => {
+test("history omits expansion content while one-turn lookup returns the exact immutable document", async () => {
   const directory = await makeTemporaryDirectory("history-");
   const store = new SemanticTranscriptStore({
     dbPath: path.join(directory, "transcript.sqlite3"),
-    legacyFilePath: null,
   });
   try {
     const document = {
       version: 1,
-      title: "Deep answer",
-      root: {
-        content: "Root [One](term:one)",
-        children: [{ content: "Child", children: [{ content: "Grandchild" }] }],
+      title: "Linear answer",
+      body: "The answer is complete. [Define this](zoom:definition)",
+      expansions: {
+        definition: {
+          kind: "definition",
+          content: "Turn-local private expansion content.",
+        },
       },
-      terms: { one: "Definition", unused: "Not returned in compact history" },
     };
     const acknowledgment = store.publish(publication({ document }));
-    const roots = store.readHistory("session:test");
-    assert.equal(roots.detail, "roots");
-    assert.equal(roots.turns[0].answer.root.content, "Root [One](term:one)");
-    assert.equal(roots.turns[0].answer.root.children, undefined);
-    assert.deepEqual(roots.turns[0].answer.terms, { one: "Definition" });
-
-    const frontier = store.readHistory("session:test", { detail: "frontier" });
-    assert.equal(frontier.turns[0].answer.root.children[0].content, "Child");
-    assert.equal(frontier.turns[0].answer.root.children[0].children, undefined);
+    const history = store.readHistory("session:test");
+    assert.equal(Object.hasOwn(history, "detail"), false);
+    assert.deepEqual(history.turns[0].answer, {
+      version: 1,
+      title: document.title,
+      body: document.body,
+    });
     assert.deepEqual(store.getTurn(acknowledgment.turnId).answer, document);
   } finally {
     store.close();
@@ -331,42 +229,37 @@ test("history is compact by default while one-turn lookup returns the full immut
   }
 });
 
-test("canonical term links and dictionaries remain scoped to their immutable turn", async () => {
-  const directory = await makeTemporaryDirectory("term-scope-");
+test("identical expansion IDs remain scoped to their immutable turn", async () => {
+  const directory = await makeTemporaryDirectory("expansion-scope-");
   const store = new SemanticTranscriptStore({
     dbPath: path.join(directory, "transcript.sqlite3"),
-    legacyFilePath: null,
   });
   try {
+    const answer = (title, content) => ({
+      version: 1,
+      title,
+      body: "Read [this](zoom:shared).",
+      expansions: { shared: { kind: "definition", content } },
+    });
     const first = store.publish(
-      publication({
-        document: {
-          version: 1,
-          title: "First term scope",
-          root: { content: "Read [K](term:k)." },
-          terms: { k: "Definition in the first turn." },
-        },
-      }),
+      publication({ document: answer("First scope", "Definition in the first turn.") }),
     );
     const second = store.publish(
       publication({
         sourceTurnKey: "turn:2",
         idempotencyKey: "idempotency:test:2",
-        document: {
-          version: 1,
-          title: "Second term scope",
-          root: { content: "Read [K](term:k)." },
-          terms: { k: "Different definition in the second turn." },
-        },
+        document: answer("Second scope", "Definition in the second turn."),
       }),
     );
-    const history = store.readHistory("session:test", { detail: "roots" });
-    assert.deepEqual(
-      history.turns.map((turn) => turn.answer.terms.k),
-      ["Definition in the first turn.", "Different definition in the second turn."],
+
+    assert.equal(
+      store.getTurn(first.turnId).answer.expansions.shared.content,
+      "Definition in the first turn.",
     );
-    assert.equal(store.getTurn(first.turnId).answer.terms.k, "Definition in the first turn.");
-    assert.equal(store.getTurn(second.turnId).answer.terms.k, "Different definition in the second turn.");
+    assert.equal(
+      store.getTurn(second.turnId).answer.expansions.shared.content,
+      "Definition in the second turn.",
+    );
   } finally {
     store.close();
     await removeTemporaryDirectory(directory);

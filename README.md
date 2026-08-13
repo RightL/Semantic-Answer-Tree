@@ -1,16 +1,37 @@
-# Semantic Answer Tree
+# Semantic Answer
 
-*Explore every answer, branch by branch*
+*Read the answer. Open only the detail you need.*
 
-Ordinary AI answers are often either too short to be useful or too long to scan. You then spend extra turns asking "explain this," "make it longer," or "make it shorter," only to replace one fixed answer with another.
+AI answers are often too short to be useful or too long to scan. Asking “explain that,” “make it longer,” or “make it shorter” over and over is an annoying way to find the right amount of detail.
 
-Semantic Answer Tree replaces that loop with one structured answer. Start with the conclusion, then independently expand only the branches or defined terms you need. The answer is generated once when it is published; expanding it never calls the model.
+Semantic Answer gives you one concise, complete answer. Optional explanation is attached to the exact words that may need it: open a short definition in place or a longer detail in a side rail on desktop and a sheet on smaller screens. Opening detail never calls the model or replaces the answer.
 
-The default product is local-first: the transcript service, SQLite database, capability token, and real viewer all run on your machine. A hosted Sites page is only a private demonstration built from synthetic data.
+The default product is local-first. The transcript service, SQLite database, capability token, and viewer all run on your machine. A hosted Sites build is a private demonstration containing synthetic data only.
 
-One-off Codex side chats that have a turn identity but no stable conversation identity publish into their own viewer session marked `Temporary`; they never borrow or merge into the main task's transcript.
+## Answer format
 
-## Quick Start
+The sole public document format is `SemanticAnswer` v1:
+
+```json
+{
+  "version": 1,
+  "title": "A useful title",
+  "body": "A concise, complete Markdown answer with [an optional explanation](zoom:why).",
+  "expansions": {
+    "why": {
+      "kind": "detail",
+      "title": "Why this works",
+      "content": "The additional explanation."
+    }
+  }
+}
+```
+
+`expansions` is optional. Each expansion has `kind: "definition"` or `kind: "detail"`, an optional plain-text `title`, and Markdown `content`. An answer body refers to it with `[visible text](zoom:id)`. Definitions open as popovers; details open in a right rail or bottom sheet. Expansion content cannot contain another `zoom:` link.
+
+The body must stand on its own. Important conclusions and decision-changing caveats stay visible in the body; expansions add explanation, evidence, examples, or implementation detail without repairing an incomplete answer.
+
+## Quick start
 
 Node.js `>=22.13.0` is required.
 
@@ -19,28 +40,31 @@ npm ci
 npm run local
 ```
 
-Start the viewer in another PowerShell terminal:
+In another PowerShell terminal:
 
 ```powershell
 npm run dev
 ```
 
-Open [http://localhost:4173](http://localhost:4173). By default, the local service listens on `http://127.0.0.1:4318`, the database is stored at `.semantic-answer/semantic-transcript.sqlite3`, and the capability token is stored at `.semantic-answer/capability-token`.
+Open [http://localhost:4173](http://localhost:4173). The local API listens on `http://127.0.0.1:4318` by default. Runtime data stays in the ignored `.semantic-answer/` directory:
 
-Linux is also supported. The [Setup Guide](docs/SETUP.md) includes native Bash commands and a private SSH-tunnel layout for viewing a Linux server's transcript from Windows without exposing the transcript API to the network.
+- `.semantic-answer/semantic-transcript.sqlite3`
+- `.semantic-answer/capability-token`
 
-For more detail, see:
+Linux is also supported. The [setup guide](docs/SETUP.md) includes native Bash commands, Codex MCP and hook configuration, and a private two-port SSH tunnel from Windows to `lzt@10.21.1.228`.
 
-- [Setup Guide](docs/SETUP.md) for MCP registration, the Codex session hook, tokens, environment variables, the API, and troubleshooting.
-- [Design and Migration](docs/DESIGN-MIGRATION.md) for the append-only SQLite model, WAL, migrations, legacy import, and hosted-demo boundaries.
-- [semantic-zoom-final skill](semantic-zoom-final/SKILL.md) for the single-answer surface, history reads, reliable publishing, and failure fallback.
+## Documentation
 
-## Common Commands
+- [Setup guide](docs/SETUP.md): Windows, Linux, the `10.21.1.228` tunnel, MCP registration, the Codex session hook, skill installation, tokens, API use, and troubleshooting.
+- [Design](docs/DESIGN.md): the answer contract, append-only transcript, sessions, idempotency, authentication, temporary side chats, events, and privacy boundaries.
+- [`semantic-answer-final`](semantic-answer-final/SKILL.md): concise publishing guidance for Codex.
 
-- `npm run local` starts the only local HTTP service that owns SQLite, validation, migrations, and SSE.
-- `npm run dev` starts the dedicated viewer at `http://localhost:4173`.
-- `npm run mcp` runs the thin stdio MCP-to-HTTP adapter for manual debugging; Codex starts it during normal use.
-- `npm test` runs the tests. Before the first browser-test run, run `npx playwright install chromium`.
-- `npm run build` builds the hosted demo, which contains only a synthetic fixture.
+## Common commands
 
-Hosted Sites deployments must remain private, with both `d1` and `r2` set to `null` in `.openai/hosting.json`. The local SQLite database, token, and real transcript are never deployed. The application code loads no remote images, telemetry, or remote fonts.
+- `npm run local` starts the loopback HTTP service that owns SQLite, validation, database migrations, and server-sent events.
+- `npm run dev` starts the viewer at `http://localhost:4173`.
+- `npm run mcp` runs the thin standard-input/output MCP adapter for manual debugging. Codex starts it during normal use.
+- `npm test` runs unit and browser tests. Before the first browser-test run, use `npx playwright install chromium`.
+- `npm run build` builds the hosted synthetic demonstration.
+
+Hosted Sites deployments must remain private, with both `d1` and `r2` set to `null` in `.openai/hosting.json`. The local database, capability token, and real transcript are never deployed. The repository remains at [RightL/Semantic-Answer-Tree](https://github.com/RightL/Semantic-Answer-Tree) until its address is renamed.
